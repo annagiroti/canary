@@ -29,7 +29,7 @@ const STATE_NAME_TO_FIPS = {
   'Wisconsin': '55', 'Wyoming': '56', 'Puerto Rico': '72',
 }
 
-export default function MapView({ layer, scenario, onHover, onSelect }) {
+export default function MapView({ layer, scenario, onHover, onSelect, onStateChange }) {
   const containerRef = useRef(null)
   const mapRef       = useRef(null)
 
@@ -38,6 +38,7 @@ export default function MapView({ layer, scenario, onHover, onSelect }) {
   const [mapReady, setMapReady] = useState(false)
 
   const [selectedState, setSelectedState] = useState(null) // { name, fips }
+  useEffect(() => { onStateChange?.(selectedState) }, [selectedState])
 
   const hoveredStateId = useRef(null)
   const hoveredCountyId = useRef(null)

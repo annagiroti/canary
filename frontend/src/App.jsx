@@ -93,6 +93,8 @@ export default function App() {
   const [selected, setSelected]     = useState(null)
   const [tab, setTab]               = useState('map')
   const [countyData, setCountyData] = useState([])
+  const [selectedState, setSelectedState] = useState(null)
+
 
   // Fetch real county data from backend whenever layer changes
   useEffect(() => {
@@ -101,6 +103,10 @@ export default function App() {
       .then(d => setCountyData(d.features.map(f => f.properties)))
       .catch(() => console.warn('Backend not available'))
   }, [layer])
+
+  const visibleCounties = selectedState
+  ? countyData.filter(c => c.STATE === selectedState.fips || c.fips?.startsWith(selectedState.fips))
+  : countyData
 
   return (
     <div style={{
@@ -166,10 +172,10 @@ export default function App() {
           setTab={setTab}
           selected={selected}
           onSelect={setSelected}
-          countyData={countyData}
+          countyData={visibleCounties}
         />
         <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-          <MapView layer={layer} scenario={scenario} onHover={setHover} onSelect={setSelected} />
+          <MapView layer={layer} scenario={scenario} onHover={setHover} onSelect={setSelected} onStateChange={setSelectedState} />
           <div style={{ position: 'absolute', top: 16, right: 16, maxWidth: 220, background: 'rgba(8,9,14,0.88)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: '10px 14px', backdropFilter: 'blur(8px)', pointerEvents: 'none' }}>
             <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#7c3aed', marginBottom: 4 }}>{LAYER_META[layer].icon} {LAYER_META[layer].label}</div>
             <div style={{ fontSize: 11, color: '#666', lineHeight: 1.5 }}>{LAYER_META[layer].desc}</div>
