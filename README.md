@@ -47,3 +47,15 @@ Put these files in `backend/data/`:
 ## Notes for hackathon speed
 - Start with the provided sample `metrics.csv` + `counties.geojson` to get the UI working.
 - Then swap in real data and keep the same columns.
+
+## Data Sources
+
+- **County Boundaries:** [Plotly Datasets — geojson-counties-fips.json](https://raw.githubusercontent.com/plotly/datasets/master/geojson-counties-fips.json)
+  - US county polygons keyed by 5-digit FIPS code
+- **Health Metrics:** [CDC PLACES](https://www.cdc.gov/places) — county-level health outcomes
+- **Air Quality:** [EPA AQS](https://www.epa.gov/aqs) — PM2.5 annual averages by county
+- **Socioeconomic:** [US Census ACS](https://www.census.gov/programs-surveys/acs) — poverty rate, healthcare access
+
+## Acknowledgements
+
+Built at BioHacks 2025. County boundary data provided by Plotly open datasets. Health and environmental data sourced from CDC, EPA, and US Census Bureau public APIs.

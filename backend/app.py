@@ -52,7 +52,7 @@ def attach_props(geojson: dict, metrics_by_fips: dict, layer: str) -> dict:
 
     for feat in geojson.get("features", []):
         props = feat.get("properties", {}) or {}
-        geoid = props.get("GEOID") or props.get("FIPS") or props.get("geoid") or props.get("fips")
+        geoid = props.get("GEOID") or props.get("FIPS") or props.get("geoid") or props.get("fips") or props.get("GEO_ID", "")[-5:]
         if geoid is None:
             continue
 
