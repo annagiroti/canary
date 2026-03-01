@@ -173,6 +173,7 @@ export default function App() {
           selected={selected}
           onSelect={setSelected}
           countyData={visibleCounties}
+          selectedState={selectedState}
         />
         <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
           <MapView layer={layer} scenario={scenario} onHover={setHover} onSelect={setSelected} onStateChange={setSelectedState} />

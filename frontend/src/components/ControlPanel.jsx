@@ -4,7 +4,7 @@ import { LAYER_META, LAYER_PALETTES, riskLabel } from '../App.jsx'
 
 const API = 'http://localhost:8000'
 
-export default function ControlPanel({ layer, scenario, setScenario, tab, setTab, selected, onSelect }) {
+export default function ControlPanel({ layer, scenario, setScenario, tab, setTab, selected, onSelect, selectedState }) {
   return (
     <div style={{
       width: 280, borderRight: '1px solid rgba(255,255,255,0.07)',
@@ -49,7 +49,7 @@ export default function ControlPanel({ layer, scenario, setScenario, tab, setTab
         <TopCountiesTab scenario={scenario} layer={layer} selected={selected} onSelect={onSelect} />
       )}
       {tab === 'equity' && (
-        <EquityTab scenario={scenario} layer={layer} onSelect={onSelect} />
+        <EquityTab scenario={scenario} layer={layer} onSelect={onSelect} selectedState={selectedState} />
       )}
     </div>
   )
@@ -108,7 +108,7 @@ function TopCountiesTab({ scenario, layer, selected, onSelect }) {
   )
 }
 
-function EquityTab({ scenario, layer, onSelect }) {
+function EquityTab({ scenario, layer, onSelect, selectedState }) {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState(null)
   const [summary, setSummary] = useState(null)
@@ -126,6 +126,7 @@ function EquityTab({ scenario, layer, onSelect }) {
       access: String(scenario.access ?? 0.6),
       targeted_pm25_cleanup: String(policyOn),
       cleanup_strength: "0.20",
+      ...(selectedState ? { state_fips: selectedState.fips } : {}),
     })
 
     fetch(`${API}/equity_summary?${params.toString()}`)
@@ -143,7 +144,7 @@ function EquityTab({ scenario, layer, onSelect }) {
       })
 
     return () => { cancelled = true }
-  }, [layer, scenario.dPm25, scenario.poverty, scenario.access, policyOn])
+  }, [layer, scenario.dPm25, scenario.poverty, scenario.access, policyOn, selectedState?.fips])
 
   const gap = summary?.deprivation_gap ?? 0
   const avgHigh = summary?.group_avgs?.high_dep ?? 0
