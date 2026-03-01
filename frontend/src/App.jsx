@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import MapView from './components/MapView.jsx'
 import ControlPanel from './components/ControlPanel.jsx'
 import Tooltip from './components/Tooltip.jsx'
 import { scenarioScore } from './lib/score.js'
+
+const API = 'http://localhost:8000'
 
 export const LAYER_META = {
   cancer: { label: 'Cancer Risk',       icon: '⬡', desc: 'Composite cancer vulnerability from pollution, poverty, and care access.' },
@@ -85,11 +87,20 @@ function SelectedPanel({ county, scenario, onClose }) {
 }
 
 export default function App() {
-  const [layer, setLayer]       = useState('cancer')
-  const [scenario, setScenario] = useState({ dPm25: 0, poverty: 0.5, access: 0.6 })
-  const [hover, setHover]       = useState(null)
-  const [selected, setSelected] = useState(null)
-  const [tab, setTab]           = useState('map')
+  const [layer, setLayer]           = useState('cancer')
+  const [scenario, setScenario]     = useState({ dPm25: 0, poverty: 0.5, access: 0.6 })
+  const [hover, setHover]           = useState(null)
+  const [selected, setSelected]     = useState(null)
+  const [tab, setTab]               = useState('map')
+  const [countyData, setCountyData] = useState([])
+
+  // Fetch real county data from backend whenever layer changes
+  useEffect(() => {
+    fetch(`${API}/geojson?layer=${layer}`)
+      .then(r => r.json())
+      .then(d => setCountyData(d.features.map(f => f.properties)))
+      .catch(() => console.warn('Backend not available'))
+  }, [layer])
 
   return (
     <div style={{
@@ -148,21 +159,23 @@ export default function App() {
       {/* Body */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <ControlPanel
-          layer={layer} scenario={scenario} setScenario={setScenario}
-          tab={tab} setTab={setTab} selected={selected} onSelect={setSelected}
+          layer={layer}
+          scenario={scenario}
+          setScenario={setScenario}
+          tab={tab}
+          setTab={setTab}
+          selected={selected}
+          onSelect={setSelected}
+          countyData={countyData}
         />
         <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
           <MapView layer={layer} scenario={scenario} onHover={setHover} onSelect={setSelected} />
-
-          {/* Layer info badge */}
           <div style={{ position: 'absolute', top: 16, right: 16, maxWidth: 220, background: 'rgba(8,9,14,0.88)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: '10px 14px', backdropFilter: 'blur(8px)', pointerEvents: 'none' }}>
             <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#7c3aed', marginBottom: 4 }}>{LAYER_META[layer].icon} {LAYER_META[layer].label}</div>
             <div style={{ fontSize: 11, color: '#666', lineHeight: 1.5 }}>{LAYER_META[layer].desc}</div>
           </div>
-
           <Tooltip hover={hover} scenario={scenario} layer={layer} />
         </div>
-
         {selected && (
           <SelectedPanel county={selected} scenario={scenario} onClose={() => setSelected(null)} />
         )}
