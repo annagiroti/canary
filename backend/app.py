@@ -8,7 +8,6 @@ DATA_DIR = Path(__file__).resolve().parent / "data"
 
 app = FastAPI(title="Canary Backend", version="0.1.0")
 
-# Hackathon-friendly CORS (lock down later)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -21,7 +20,6 @@ def zfill_fips(x) -> str:
     if pd.isna(x):
         return ""
     s = str(x).strip()
-    # Handle numeric-looking strings like 6087.0
     if s.endswith(".0"):
         s = s[:-2]
     return s.zfill(5)
@@ -34,7 +32,6 @@ def load_metrics_csv(path: Path) -> pd.DataFrame:
     return df
 
 def build_metrics_index(metrics_df: pd.DataFrame) -> dict:
-    # Convert to a dict keyed by fips for fast lookup
     metrics_df = metrics_df.copy()
     metrics_df["fips"] = metrics_df["fips"].map(zfill_fips)
     return metrics_df.set_index("fips").to_dict(orient="index")
@@ -46,40 +43,56 @@ def load_counties_geojson(path: Path) -> dict:
         raise ValueError("counties.geojson must be a FeatureCollection.")
     return gj
 
+def extract_fips_from_props(props: dict) -> str:
+    """Extract 5-digit FIPS from various property key formats."""
+    # Try clean keys first
+    for key in ("GEOID", "FIPS", "geoid", "fips"):
+        val = props.get(key)
+        if val:
+            return zfill_fips(val)
+    # Handle GEO_ID format: '0500000US06087' → '06087'
+    geo_id = props.get("GEO_ID", "")
+    if geo_id:
+        return geo_id[-5:]
+    # Fallback: combine STATE + COUNTY
+    state = props.get("STATE", "")
+    county = props.get("COUNTY", "")
+    if state and county:
+        return (str(state).zfill(2) + str(county).zfill(3))
+    return ""
+
 def attach_props(geojson: dict, metrics_by_fips: dict, layer: str) -> dict:
     base_key = f"base_{layer}"
     out = {"type": "FeatureCollection", "features": []}
 
     for feat in geojson.get("features", []):
         props = feat.get("properties", {}) or {}
-        geoid = props.get("GEOID") or props.get("FIPS") or props.get("geoid") or props.get("fips") or props.get("GEO_ID", "")[-5:]
-        if geoid is None:
+        fips = extract_fips_from_props(props)
+        if not fips:
             continue
 
-        fips = zfill_fips(geoid)
         m = metrics_by_fips.get(fips)
-        if not m:
-            continue
 
-        # Build properties expected by the frontend.
+        # Include all counties even without metrics (so map shows all shapes)
         new_props = dict(props)
         new_props.update({
-            "fips": fips,
-            "county": m.get("county", props.get("NAME", "")),
-            "state": m.get("state", props.get("STATE", "")),
-            "base": float(m.get(base_key, 0.0)),
-            "w_pm25": float(m.get("w_pm25", 0.0)),
-            "w_poverty": float(m.get("w_poverty", 0.0)),
-            "w_access": float(m.get("w_access", 0.0)),
-            "pm25": float(m.get("pm25", 0.0)),
-            "poverty": float(m.get("poverty", 0.0)),
-            "access": float(m.get("access", 0.0)),
+            "fips":      fips,
+            "STATE":     props.get("STATE", fips[:2]),
+            "county":    m.get("county", props.get("NAME", "")) if m else props.get("NAME", ""),
+            "state":     m.get("state",  props.get("STATE", "")) if m else props.get("STATE", ""),
+            "base":      float(m.get(base_key, 0.3)) if m else 0.3,
+            "w_pm25":    float(m.get("w_pm25",   0.18))  if m else 0.18,
+            "w_poverty": float(m.get("w_poverty", 0.14)) if m else 0.14,
+            "w_access":  float(m.get("w_access", -0.20)) if m else -0.20,
+            "pm25":      float(m.get("pm25",    0.5)) if m else 0.5,
+            "poverty":   float(m.get("poverty", 0.5)) if m else 0.5,
+            "access":    float(m.get("access",  0.5)) if m else 0.5,
         })
 
         out["features"].append({
             "type": "Feature",
             "geometry": feat.get("geometry"),
-            "properties": new_props
+            "properties": new_props,
         })
 
     return out
@@ -94,9 +107,9 @@ def geojson(
 ):
     """Return counties GeoJSON with properties attached for the requested layer."""
     counties_path = DATA_DIR / "counties.geojson"
-    metrics_path = DATA_DIR / "metrics.csv"
+    metrics_path  = DATA_DIR / "metrics.csv"
 
-    counties = load_counties_geojson(counties_path)
+    counties   = load_counties_geojson(counties_path)
     metrics_df = load_metrics_csv(metrics_path)
     metrics_by_fips = build_metrics_index(metrics_df)
 
@@ -106,8 +119,14 @@ def geojson(
 def metrics(fips: str):
     """Return the metrics row for a given FIPS."""
     metrics_path = DATA_DIR / "metrics.csv"
-    metrics_df = load_metrics_csv(metrics_path)
+    metrics_df   = load_metrics_csv(metrics_path)
     idx = build_metrics_index(metrics_df)
     f = zfill_fips(fips)
     return {"fips": f, "metrics": idx.get(f)}
 
+@app.get("/states")
+def states():
+    """Return state boundary GeoJSON for the drill-down map."""
+    states_path = DATA_DIR / "states.geojson"
+    with open(states_path, "r") as f:
+        return json.load(f)
