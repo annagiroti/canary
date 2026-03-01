@@ -76,24 +76,48 @@ def extract_fips_from_props(props: dict) -> str:
 
 def scenario_score(row: pd.Series, layer: str, dPm25: float, poverty: float, access: float) -> float:
     """
-    Mirror frontend scenarioScore:
-      score = base + w_pm25*dPm25 + w_poverty*(poverty_target - poverty_county) + w_access*(access_target - access_county)
-    In our upgraded dataset: w_deprivation replaces w_poverty and deprivation replaces poverty.
-    We keep poverty alias for compatibility.
+    Bioethics-oriented scoring:
+      burden = base
+             + w_pm25 * (pm25 + dPm25)
+             + w_dep  * deprivation
+             + w_low_access * (1 - access)
+
+    UI sliders:
+      - poverty slider acts as a deprivation *multiplier* (how strongly deprivation contributes)
+      - access slider acts as a care-access *multiplier* (how strongly low access contributes)
+      - dPm25 is an additive delta to normalized pm25 driver
     """
     base = float(row.get(f"base_{layer}", row.get("base", 0.3)) or 0.3)
 
+    # weights (keep simple + interpretable)
     w_pm25 = float(row.get("w_pm25", 1.0) or 1.0)
     w_dep  = float(row.get("w_deprivation", row.get("w_poverty", 0.8)) or 0.8)
-    w_acc  = float(row.get("w_access", -0.7) or -0.7)
 
-    dep = float(row.get("deprivation", row.get("poverty", 0.5)) or 0.5)
-    acc = float(row.get("access", 0.6) or 0.6)
+    # "w_access" in your data is negative; convert to a positive low-access weight
+    w_low_access = abs(float(row.get("w_access", -0.7) or -0.7))
 
-    d_dep = float(poverty) - dep
-    d_acc = float(access) - acc
-    score = base + w_pm25 * float(dPm25) + w_dep * d_dep + w_acc * d_acc
-    return float(score)
+    pm25 = float(row.get("pm25", 0.5) or 0.5)
+    dep  = float(row.get("deprivation", row.get("poverty", 0.5)) or 0.5)
+    acc  = float(row.get("access", 0.6) or 0.6)
+
+    # clamp
+    pm25_eff = max(0.0, min(1.0, pm25 + float(dPm25)))
+    dep = max(0.0, min(1.0, dep))
+    low_access = max(0.0, min(1.0, 1.0 - acc))
+
+    # sliders become multipliers (0..1 range)
+    dep_mult = float(poverty)  # 0..1
+    acc_mult = float(access)   # 0..1 (how much we "care" about access inequity)
+
+    score = (
+        base
+        + w_pm25 * pm25_eff
+        + (w_dep * dep_mult) * dep
+        + (w_low_access * acc_mult) * low_access
+    )
+
+    # keep bounded for choropleth
+    return float(max(0.0, min(1.0, score)))
 
 
 def attach_props(counties_gj: dict, metrics_by_fips: dict, layer: str) -> dict:
