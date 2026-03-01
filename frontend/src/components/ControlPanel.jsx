@@ -61,7 +61,6 @@ export default function ControlPanel({ layer, scenario, setScenario, tab, setTab
 function TopCountiesTab({ scenario, layer, selected, onSelect, countyData }) {
   const palette = LAYER_PALETTES[layer]
 
-  // Score and sort all real counties from backend
   const scored = countyData
     .filter(c => c && c.base != null)
     .map(c => ({ ...c, score: scenarioScore(c, scenario) }))
@@ -110,18 +109,23 @@ function TopCountiesTab({ scenario, layer, selected, onSelect, countyData }) {
 }
 
 function EquityTab({ scenario, layer, countyData }) {
-  // Split by poverty proxy — high poverty = bottom 25%, low poverty = top 25%
-  const sorted = [...countyData].sort((a, b) => Number(a.poverty) - Number(b.poverty))
+  // Sort by poverty ascending (0 = low poverty, 1 = high poverty)
+  const sorted = [...countyData]
+    .filter(c => c.poverty != null)
+    .sort((a, b) => Number(a.poverty) - Number(b.poverty))
+
   const q = Math.floor(sorted.length / 4)
-  const highIncome = sorted.slice(0, q)         // lowest poverty
-  const lowIncome  = sorted.slice(sorted.length - q) // highest poverty
+  const lowPoverty  = sorted.slice(0, q)              // bottom 25% poverty = wealthy
+  const highPoverty = sorted.slice(sorted.length - q) // top 25% poverty = disadvantaged
 
   const avg = arr => arr.length === 0 ? 0 :
     arr.reduce((s, c) => s + scenarioScore(c, scenario), 0) / arr.length
 
-  const avgLow  = avg(lowIncome)
-  const avgHigh = avg(highIncome)
-  const gap = (avgLow - avgHigh).toFixed(3)
+  const avgHighPoverty = avg(highPoverty)
+  const avgLowPoverty  = avg(lowPoverty)
+
+  // Gap should always be positive: disadvantaged counties score higher risk
+  const gap = Math.abs(avgHighPoverty - avgLowPoverty).toFixed(3)
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '16px 18px' }}>
@@ -136,8 +140,8 @@ function EquityTab({ scenario, layer, countyData }) {
       </div>
 
       {[
-        { label: 'High poverty counties (avg)',  val: avgLow,  color: '#f97316' },
-        { label: 'Low poverty counties (avg)',   val: avgHigh, color: '#34d399' },
+        { label: 'High poverty counties (avg)', val: avgHighPoverty, color: '#f97316' },
+        { label: 'Low poverty counties (avg)',  val: avgLowPoverty,  color: '#34d399' },
       ].map(d => (
         <div key={d.label} style={{ marginBottom: 12 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
