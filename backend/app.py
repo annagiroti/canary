@@ -6,7 +6,7 @@ from pathlib import Path
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 
-app = FastAPI(title="Canary Backend", version="0.1.0")
+app = FastAPI(title="Canary Backend", version="0.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -16,6 +16,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+ALLOWED_LAYERS = {"cancer", "neuro", "amr"}
+
+
 def zfill_fips(x) -> str:
     if pd.isna(x):
         return ""
@@ -24,70 +27,111 @@ def zfill_fips(x) -> str:
         s = s[:-2]
     return s.zfill(5)
 
+
 def load_metrics_csv(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path, dtype={"fips": str})
     if "fips" not in df.columns:
         raise ValueError("metrics.csv must include a 'fips' column.")
     df["fips"] = df["fips"].map(zfill_fips)
+
+    # Backward compatibility: ensure deprivation exists
+    if "deprivation" not in df.columns and "poverty" in df.columns:
+        df["deprivation"] = pd.to_numeric(df["poverty"], errors="coerce")
+
+    # Ensure poverty alias exists for older frontend usage
+    if "poverty" not in df.columns and "deprivation" in df.columns:
+        df["poverty"] = pd.to_numeric(df["deprivation"], errors="coerce")
+
     return df
+
 
 def build_metrics_index(metrics_df: pd.DataFrame) -> dict:
     metrics_df = metrics_df.copy()
     metrics_df["fips"] = metrics_df["fips"].map(zfill_fips)
     return metrics_df.set_index("fips").to_dict(orient="index")
 
-def load_counties_geojson(path: Path) -> dict:
+
+def load_geojson(path: Path) -> dict:
     with open(path, "r") as f:
         gj = json.load(f)
     if gj.get("type") != "FeatureCollection":
-        raise ValueError("counties.geojson must be a FeatureCollection.")
+        raise ValueError(f"{path.name} must be a FeatureCollection.")
     return gj
 
+
 def extract_fips_from_props(props: dict) -> str:
-    """Extract 5-digit FIPS from various property key formats."""
-    # Try clean keys first
     for key in ("GEOID", "FIPS", "geoid", "fips"):
         val = props.get(key)
         if val:
             return zfill_fips(val)
-    # Handle GEO_ID format: '0500000US06087' → '06087'
     geo_id = props.get("GEO_ID", "")
     if geo_id:
         return geo_id[-5:]
-    # Fallback: combine STATE + COUNTY
     state = props.get("STATE", "")
     county = props.get("COUNTY", "")
     if state and county:
         return (str(state).zfill(2) + str(county).zfill(3))
     return ""
 
-def attach_props(geojson: dict, metrics_by_fips: dict, layer: str) -> dict:
+
+def scenario_score(row: pd.Series, layer: str, dPm25: float, poverty: float, access: float) -> float:
+    """
+    Mirror frontend scenarioScore:
+      score = base + w_pm25*dPm25 + w_poverty*(poverty_target - poverty_county) + w_access*(access_target - access_county)
+    In our upgraded dataset: w_deprivation replaces w_poverty and deprivation replaces poverty.
+    We keep poverty alias for compatibility.
+    """
+    base = float(row.get(f"base_{layer}", row.get("base", 0.3)) or 0.3)
+
+    w_pm25 = float(row.get("w_pm25", 1.0) or 1.0)
+    w_dep  = float(row.get("w_deprivation", row.get("w_poverty", 0.8)) or 0.8)
+    w_acc  = float(row.get("w_access", -0.7) or -0.7)
+
+    dep = float(row.get("deprivation", row.get("poverty", 0.5)) or 0.5)
+    acc = float(row.get("access", 0.6) or 0.6)
+
+    d_dep = float(poverty) - dep
+    d_acc = float(access) - acc
+    score = base + w_pm25 * float(dPm25) + w_dep * d_dep + w_acc * d_acc
+    return float(score)
+
+
+def attach_props(counties_gj: dict, metrics_by_fips: dict, layer: str) -> dict:
     base_key = f"base_{layer}"
     out = {"type": "FeatureCollection", "features": []}
 
-    for feat in geojson.get("features", []):
+    for feat in counties_gj.get("features", []):
         props = feat.get("properties", {}) or {}
         fips = extract_fips_from_props(props)
         if not fips:
             continue
 
-        m = metrics_by_fips.get(fips)
+        m = metrics_by_fips.get(fips, {})
 
-        # Include all counties even without metrics (so map shows all shapes)
         new_props = dict(props)
-        
         new_props.update({
-            "fips":      fips,
-            "STATE":     props.get("STATE", fips[:2]),
-            "county":    m.get("county", props.get("NAME", "")) if m else props.get("NAME", ""),
-            "state":     m.get("state",  props.get("STATE", "")) if m else props.get("STATE", ""),
-            "base":      float(m.get(base_key, 0.3)) if m else 0.3,
-            "w_pm25":    float(m.get("w_pm25",   0.18))  if m else 0.18,
-            "w_poverty": float(m.get("w_poverty", 0.14)) if m else 0.14,
-            "w_access":  float(m.get("w_access", -0.20)) if m else -0.20,
-            "pm25":      float(m.get("pm25") or 0.5) if m else 0.5,
-            "poverty":   float(m.get("poverty") or 0.5) if m else 0.5,
-            "access":    float(m.get("access") or 0.5) if m else 0.5,
+            "fips": fips,
+            "STATE": props.get("STATE", fips[:2]),
+            "county": m.get("county", props.get("NAME", "")) or props.get("NAME", ""),
+            "state":  m.get("state",  "") or props.get("STATE", ""),
+            "base": float(m.get(base_key, 0.3) or 0.3),
+
+            "w_pm25": float(m.get("w_pm25", 1.0) or 1.0),
+            "w_poverty": float(m.get("w_poverty", m.get("w_deprivation", 0.8)) or 0.8),
+            "w_deprivation": float(m.get("w_deprivation", m.get("w_poverty", 0.8)) or 0.8),
+            "w_access": float(m.get("w_access", -0.7) or -0.7),
+
+            "pm25": float(m.get("pm25", 0.5) or 0.5),
+            "pm25_raw": float(m.get("pm25_raw", 0.0) or 0.0),
+
+            "deprivation": float(m.get("deprivation", m.get("poverty", 0.5)) or 0.5),
+            "poverty": float(m.get("poverty", m.get("deprivation", 0.5)) or 0.5),
+
+            "access": float(m.get("access", 0.6) or 0.6),
+            "uninsured": float(m.get("uninsured", 0.0) or 0.0),
+
+            "structural_vulnerability": float(m.get("structural_vulnerability", 0.5) or 0.5),
+            "equity_gap": float(m.get("equity_gap", 0.5) or 0.5),
         })
 
         out["features"].append({
@@ -98,36 +142,172 @@ def attach_props(geojson: dict, metrics_by_fips: dict, layer: str) -> dict:
 
     return out
 
+
 @app.get("/health")
 def health():
     return {"ok": True, "service": "canary-backend"}
 
+
 @app.get("/geojson")
-def geojson(
-    layer: str = Query("cancer", pattern="^(cancer|neuro|amr)$")
-):
-    """Return counties GeoJSON with properties attached for the requested layer."""
+def geojson(layer: str = Query("cancer")):
+    if layer not in ALLOWED_LAYERS:
+        return {"error": True, "message": f"layer must be one of {sorted(ALLOWED_LAYERS)}"}
+
     counties_path = DATA_DIR / "counties.geojson"
     metrics_path  = DATA_DIR / "metrics.csv"
 
-    counties   = load_counties_geojson(counties_path)
+    counties = load_geojson(counties_path)
     metrics_df = load_metrics_csv(metrics_path)
-    metrics_by_fips = build_metrics_index(metrics_df)
+    idx = build_metrics_index(metrics_df)
 
-    return attach_props(counties, metrics_by_fips, layer)
+    return attach_props(counties, idx, layer)
+
 
 @app.get("/metrics")
 def metrics(fips: str):
-    """Return the metrics row for a given FIPS."""
     metrics_path = DATA_DIR / "metrics.csv"
-    metrics_df   = load_metrics_csv(metrics_path)
+    metrics_df = load_metrics_csv(metrics_path)
     idx = build_metrics_index(metrics_df)
     f = zfill_fips(fips)
     return {"fips": f, "metrics": idx.get(f)}
 
+
 @app.get("/states")
 def states():
-    """Return state boundary GeoJSON for the drill-down map."""
     states_path = DATA_DIR / "states.geojson"
-    with open(states_path, "r") as f:
-        return json.load(f)
+    return load_geojson(states_path)
+
+
+@app.get("/equity_summary")
+def equity_summary(
+    layer: str = Query("cancer"),
+    # scenario values (mirrors frontend state)
+    dPm25: float = Query(0.0),
+    poverty: float = Query(0.5),
+    access: float = Query(0.6),
+    # policy simulation: targeted cleanup in high-deprivation counties
+    targeted_pm25_cleanup: bool = Query(False),
+    cleanup_strength: float = Query(0.20),  # 20% == -0.20 dPm25 for targeted counties
+):
+    """
+    Bioethics-focused equity endpoint.
+    Returns:
+      - disparity gaps (high vs low deprivation; low vs high access)
+      - driver decomposition (pollution / deprivation / low access gaps)
+      - top underserved counties (structural vulnerability + low access)
+      - policy simulation impact (gap_before/gap_after)
+    """
+    if layer not in ALLOWED_LAYERS:
+        return {"error": True, "message": f"layer must be one of {sorted(ALLOWED_LAYERS)}"}
+
+    metrics_path = DATA_DIR / "metrics.csv"
+    df = load_metrics_csv(metrics_path).copy()
+
+    # numeric conversions
+    for c in ["deprivation", "poverty", "access", "pm25", "equity_gap", "structural_vulnerability"]:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    # define high/low deprivation groups (quartiles)
+    q25 = df["deprivation"].quantile(0.25)
+    q75 = df["deprivation"].quantile(0.75)
+
+    low_dep  = df[df["deprivation"] <= q25].copy()
+    high_dep = df[df["deprivation"] >= q75].copy()
+
+    # define low/high access groups (quartiles)
+    a25 = df["access"].quantile(0.25)
+    a75 = df["access"].quantile(0.75)
+
+    low_acc  = df[df["access"] <= a25].copy()
+    high_acc = df[df["access"] >= a75].copy()
+
+    # compute scenario-adjusted score for each county
+    df["score"] = df.apply(lambda r: scenario_score(r, layer, dPm25, poverty, access), axis=1)
+
+    # gap computations on scenario-adjusted scores
+    def avg_score(sub: pd.DataFrame) -> float:
+        if len(sub) == 0:
+            return 0.0
+        return float(pd.to_numeric(sub["score"], errors="coerce").mean())
+
+    # inequity gap: high deprivation - low deprivation
+    gap_dep = avg_score(df[df["deprivation"] >= q75]) - avg_score(df[df["deprivation"] <= q25])
+
+    # access gap: low access - high access (burden difference)
+    gap_acc = avg_score(df[df["access"] <= a25]) - avg_score(df[df["access"] >= a75])
+
+    # driver decomposition (differences in means)
+    def mean(sub: pd.DataFrame, col: str) -> float:
+        if len(sub) == 0:
+            return 0.0
+        return float(pd.to_numeric(sub[col], errors="coerce").mean())
+
+    drivers = {
+        "pm25_gap": mean(high_dep, "pm25") - mean(low_dep, "pm25"),
+        "deprivation_gap": mean(high_dep, "deprivation") - mean(low_dep, "deprivation"),
+        "low_access_gap": (1.0 - mean(high_dep, "access")) - (1.0 - mean(low_dep, "access")),
+    }
+
+    # Top underserved: structural vulnerability + access issues
+    df["underserved_score"] = (
+        pd.to_numeric(df.get("equity_gap", 0.5), errors="coerce").fillna(0.5) * 0.6
+        + pd.to_numeric(df.get("structural_vulnerability", 0.5), errors="coerce").fillna(0.5) * 0.4
+    )
+
+    top = (
+        df.sort_values("underserved_score", ascending=False)
+        .head(10)[["fips", "county", "state", "access", "deprivation", "pm25", "underserved_score"]]
+        .fillna(0)
+        .to_dict(orient="records")
+    )
+
+    # --- Policy simulation ---
+    gap_before = gap_dep
+    gap_after = gap_before
+
+    if targeted_pm25_cleanup:
+        # apply an extra negative dPm25 ONLY to high-deprivation counties
+        extra = -abs(float(cleanup_strength))
+        df2 = df.copy()
+        is_high = df2["deprivation"] >= q75
+
+        df2.loc[~is_high, "score_policy"] = df2.loc[~is_high].apply(
+            lambda r: scenario_score(r, layer, dPm25, poverty, access), axis=1
+        )
+        df2.loc[is_high, "score_policy"] = df2.loc[is_high].apply(
+            lambda r: scenario_score(r, layer, dPm25 + extra, poverty, access), axis=1
+        )
+
+        def avg_policy(sub: pd.DataFrame) -> float:
+            if len(sub) == 0:
+                return 0.0
+            return float(pd.to_numeric(sub["score_policy"], errors="coerce").mean())
+
+        gap_after = avg_policy(df2[df2["deprivation"] >= q75]) - avg_policy(df2[df2["deprivation"] <= q25])
+
+    return {
+        "layer": layer,
+        "scenario": {"dPm25": dPm25, "poverty": poverty, "access": access},
+        "deprivation_gap": float(gap_dep),
+        "access_gap": float(gap_acc),
+        "drivers": {k: float(v) for k, v in drivers.items()},
+        "group_avgs": {
+            "high_dep": float(avg_score(df[df["deprivation"] >= q75])),
+            "low_dep": float(avg_score(df[df["deprivation"] <= q25])),
+            "low_access": float(avg_score(df[df["access"] <= a25])),
+            "high_access": float(avg_score(df[df["access"] >= a75])),
+        },
+        "policy": {
+            "targeted_pm25_cleanup": bool(targeted_pm25_cleanup),
+            "cleanup_strength": float(cleanup_strength),
+            "gap_before": float(gap_before),
+            "gap_after": float(gap_after),
+            "delta": float(gap_after - gap_before),
+        },
+        "top_underserved": top,
+        "bioethics_note": (
+            "Equity metrics are structural proxies, not individual blame. "
+            "Use for identifying under-resourced areas and evaluating upstream interventions."
+        ),
+    }
