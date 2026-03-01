@@ -52,10 +52,14 @@ Put these files in `backend/data/`:
 
 - **County Boundaries:** [Plotly Datasets — geojson-counties-fips.json](https://raw.githubusercontent.com/plotly/datasets/master/geojson-counties-fips.json)
   - US county polygons keyed by 5-digit FIPS code
+- **State Boundaries:** [PublicaMundi MappingAPI — us-states.json](https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geojson/us-states.json)
+  - US state polygons with name and density properties
+- **Base Map:** [CartoDB Dark Matter](https://carto.com/basemaps/) via MapLibre GL
+  - Dark no-labels tile style for choropleth visualization
 - **Health Metrics:** [CDC PLACES](https://www.cdc.gov/places) — county-level health outcomes
 - **Air Quality:** [EPA AQS](https://www.epa.gov/aqs) — PM2.5 annual averages by county
 - **Socioeconomic:** [US Census ACS](https://www.census.gov/programs-surveys/acs) — poverty rate, healthcare access
 
 ## Acknowledgements
 
-Built at BioHacks 2025. County boundary data provided by Plotly open datasets. Health and environmental data sourced from CDC, EPA, and US Census Bureau public APIs.
+Built at BioHacks 2025. County and state boundary data provided by Plotly and PublicaMundi open datasets. Base map tiles by CartoDB. Health and environmental data sourced from CDC, EPA, and US Census Bureau public APIs.
