@@ -201,12 +201,45 @@ export default function MapView({ layer, scenario, onHover, onSelect }) {
     return () => { map.remove(); mapRef.current = null }
   }, [onHover, onSelect])
 
-  // Load state GeoJSON into map
+  // Load state GeoJSON + color by avg county risk score
   useEffect(() => {
     const map = mapRef.current
     if (!map || !mapReady || !stateGeo) return
-    map.getSource('states')?.setData(stateGeo)
-  }, [stateGeo, mapReady])
+
+    // Compute avg score per state from county data
+    const stateTotals = {}
+    if (geo) {
+      geo.features.forEach(ft => {
+        const stateFips = ft.properties?.STATE || ft.properties?.fips?.slice(0, 2)
+        if (!stateFips) return
+        const score = Math.min(1, Math.max(0, scenarioScore(ft.properties, scenario)))
+        if (!stateTotals[stateFips]) stateTotals[stateFips] = { sum: 0, count: 0 }
+        stateTotals[stateFips].sum += score
+        stateTotals[stateFips].count += 1
+      })
+    }
+
+    // Attach avg_score to each state feature
+    const enriched = {
+      ...stateGeo,
+      features: stateGeo.features.map(f => {
+        const name = f.properties?.name
+        const fips = STATE_NAME_TO_FIPS[name]
+        const entry = fips ? stateTotals[fips] : null
+        const avg_score = entry ? entry.sum / entry.count : 0.35
+        return { ...f, properties: { ...f.properties, avg_score } }
+      }),
+    }
+
+    map.getSource('states')?.setData(enriched)
+
+    // Color states by avg_score using same ramp as counties
+    const stops = COLOR_STOPS[layer]
+    map.setPaintProperty('states-fill', 'fill-color', [
+      'interpolate', ['linear'], ['get', 'avg_score'], ...stops,
+    ])
+    map.setPaintProperty('states-fill', 'fill-opacity', 0.75)
+  }, [stateGeo, mapReady, geo, scenario, layer])
 
   // Update county choropleth when layer/scenario/selectedState changes
   useEffect(() => {
