@@ -32,11 +32,15 @@ const STATE_NAME_TO_FIPS = {
 export default function MapView({ layer, scenario, onHover, onSelect }) {
   const containerRef = useRef(null)
   const mapRef       = useRef(null)
-  const [geo, setGeo]             = useState(null)   // county GeoJSON
-  const [stateGeo, setStateGeo]   = useState(null)   // state GeoJSON
-  const [mapReady, setMapReady]   = useState(false)
+
+  const [geo, setGeo] = useState(null)         // county GeoJSON (from backend)
+  const [stateGeo, setStateGeo] = useState(null) // state GeoJSON (from backend)
+  const [mapReady, setMapReady] = useState(false)
+
   const [selectedState, setSelectedState] = useState(null) // { name, fips }
+
   const hoveredStateId = useRef(null)
+  const hoveredCountyId = useRef(null)
 
   // Fetch county GeoJSON from backend
   useEffect(() => {
@@ -59,18 +63,26 @@ export default function MapView({ layer, scenario, onHover, onSelect }) {
     const map = mapRef.current
     if (!map) return
     setSelectedState(null)
+
     map.flyTo({ center: [-98.5, 39.8], zoom: 3.2, duration: 800 })
+
     // Show states, hide counties
     if (map.getLayer('counties-fill')) {
       map.setLayoutProperty('counties-fill', 'visibility', 'none')
       map.setLayoutProperty('counties-line', 'visibility', 'none')
+      if (map.getLayer('counties-hover-line')) {
+        map.setLayoutProperty('counties-hover-line', 'visibility', 'none')
+      }
     }
     if (map.getLayer('states-fill')) {
       map.setLayoutProperty('states-fill', 'visibility', 'visible')
       map.setLayoutProperty('states-line', 'visibility', 'visible')
       map.setLayoutProperty('states-hover', 'visibility', 'visible')
     }
-  }, [])
+
+    // clear hover tooltip
+    onHover?.(null)
+  }, [onHover])
 
   // Init map
   useEffect(() => {
@@ -93,9 +105,11 @@ export default function MapView({ layer, scenario, onHover, onSelect }) {
         generateId: true,
       })
 
-      // State fill (hover highlight)
+      // State fill (base)
       map.addLayer({
-        id: 'states-fill', type: 'fill', source: 'states',
+        id: 'states-fill',
+        type: 'fill',
+        source: 'states',
         paint: {
           'fill-color': 'rgba(124,58,237,0.18)',
           'fill-opacity': 1,
@@ -104,7 +118,9 @@ export default function MapView({ layer, scenario, onHover, onSelect }) {
 
       // State hover highlight
       map.addLayer({
-        id: 'states-hover', type: 'fill', source: 'states',
+        id: 'states-hover',
+        type: 'fill',
+        source: 'states',
         paint: {
           'fill-color': 'rgba(124,58,237,0.45)',
           'fill-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 1, 0],
@@ -113,7 +129,9 @@ export default function MapView({ layer, scenario, onHover, onSelect }) {
 
       // State borders
       map.addLayer({
-        id: 'states-line', type: 'line', source: 'states',
+        id: 'states-line',
+        type: 'line',
+        source: 'states',
         paint: { 'line-color': 'rgba(200,180,255,0.9)', 'line-width': 1.5 },
       })
 
@@ -121,30 +139,57 @@ export default function MapView({ layer, scenario, onHover, onSelect }) {
       map.addSource('counties', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
+        generateId: true, // required for feature-state hover
       })
+
       map.addLayer({
-        id: 'counties-fill', type: 'fill', source: 'counties',
+        id: 'counties-fill',
+        type: 'fill',
+        source: 'counties',
         layout: { visibility: 'none' },
         paint: { 'fill-color': '#334', 'fill-opacity': 0.85 },
       })
+
+      // County borders (make them readable)
       map.addLayer({
-        id: 'counties-line', type: 'line', source: 'counties',
+        id: 'counties-line',
+        type: 'line',
+        source: 'counties',
         layout: { visibility: 'none' },
-        paint: { 'line-color': 'rgba(0,0,0,0.35)', 'line-width': 0.4 },
+        paint: {
+          'line-color': 'rgba(255,255,255,0.28)',
+          'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.2, 5, 0.45, 7, 0.85, 9, 1.25],
+        },
+      })
+
+      // County hover outline (crisp highlight)
+      map.addLayer({
+        id: 'counties-hover-line',
+        type: 'line',
+        source: 'counties',
+        layout: { visibility: 'none' },
+        paint: {
+          'line-color': 'rgba(255,255,255,0.85)',
+          'line-width': ['interpolate', ['linear'], ['zoom'], 3, 1.0, 6, 1.8, 9, 3.0],
+        },
+        filter: ['boolean', ['feature-state', 'hover'], false],
       })
 
       // ── State interactions ────────────────────────────────────
       map.on('mousemove', 'states-fill', e => {
         map.getCanvas().style.cursor = 'pointer'
         const id = e.features?.[0]?.id
+
         if (hoveredStateId.current !== null && hoveredStateId.current !== id) {
           map.setFeatureState({ source: 'states', id: hoveredStateId.current }, { hover: false })
         }
         hoveredStateId.current = id
-        map.setFeatureState({ source: 'states', id }, { hover: true })
+        if (id !== undefined && id !== null) {
+          map.setFeatureState({ source: 'states', id }, { hover: true })
+        }
 
         const name = e.features?.[0]?.properties?.name
-        onHover?.({ lngLat: e.lngLat, props: { county: name, state: '', isState: true } })
+        onHover?.({ point: e.point, lngLat: e.lngLat, props: { county: name, state: '', isState: true } })
       })
 
       map.on('mouseleave', 'states-fill', () => {
@@ -162,12 +207,14 @@ export default function MapView({ layer, scenario, onHover, onSelect }) {
         const fips = STATE_NAME_TO_FIPS[name]
         if (!fips) return
 
-        // Zoom to state bounds
+        // Zoom to state bounds (handles multipolygons)
         const bounds = new maplibregl.LngLatBounds()
-        e.features[0].geometry.coordinates.forEach(ring => {
-          const coords = Array.isArray(ring[0][0]) ? ring.flat() : ring
-          coords.forEach(c => bounds.extend(c))
-        })
+        const geom = e.features?.[0]?.geometry
+        if (geom?.type === 'Polygon') {
+          geom.coordinates.forEach(ring => ring.forEach(c => bounds.extend(c)))
+        } else if (geom?.type === 'MultiPolygon') {
+          geom.coordinates.forEach(poly => poly.forEach(ring => ring.forEach(c => bounds.extend(c))))
+        }
         map.fitBounds(bounds, { padding: 60, duration: 800 })
 
         setSelectedState({ name, fips })
@@ -176,20 +223,39 @@ export default function MapView({ layer, scenario, onHover, onSelect }) {
         map.setLayoutProperty('states-fill',  'visibility', 'none')
         map.setLayoutProperty('states-line',  'visibility', 'none')
         map.setLayoutProperty('states-hover', 'visibility', 'none')
-        map.setLayoutProperty('counties-fill','visibility', 'visible')
-        map.setLayoutProperty('counties-line','visibility', 'visible')
+
+        map.setLayoutProperty('counties-fill', 'visibility', 'visible')
+        map.setLayoutProperty('counties-line', 'visibility', 'visible')
+        map.setLayoutProperty('counties-hover-line', 'visibility', 'visible')
       })
 
       // ── County interactions ───────────────────────────────────
       map.on('mousemove', 'counties-fill', e => {
         map.getCanvas().style.cursor = 'pointer'
         const f = e.features?.[0]
-        if (f) onHover?.({ lngLat: e.lngLat, props: f.properties })
+        const id = f?.id
+
+        // Toggle hover state to drive hover outline layer
+        if (hoveredCountyId.current !== null && hoveredCountyId.current !== id) {
+          map.setFeatureState({ source: 'counties', id: hoveredCountyId.current }, { hover: false })
+        }
+        if (id !== undefined && id !== null) {
+          hoveredCountyId.current = id
+          map.setFeatureState({ source: 'counties', id }, { hover: true })
+        }
+
+        if (f) onHover?.({ point: e.point, lngLat: e.lngLat, props: f.properties })
       })
+
       map.on('mouseleave', 'counties-fill', () => {
         map.getCanvas().style.cursor = ''
+        if (hoveredCountyId.current !== null) {
+          map.setFeatureState({ source: 'counties', id: hoveredCountyId.current }, { hover: false })
+          hoveredCountyId.current = null
+        }
         onHover?.(null)
       })
+
       map.on('click', 'counties-fill', e => {
         const f = e.features?.[0]
         if (f) onSelect?.(f.properties)
@@ -262,6 +328,7 @@ export default function MapView({ layer, scenario, onHover, onSelect }) {
     }
 
     map.getSource('counties')?.setData(scored)
+
     map.setPaintProperty('counties-fill', 'fill-color', [
       'interpolate', ['linear'], ['get', 'score'], ...stops,
     ])
