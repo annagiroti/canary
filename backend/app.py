@@ -75,6 +75,7 @@ def attach_props(geojson: dict, metrics_by_fips: dict, layer: str) -> dict:
 
         # Include all counties even without metrics (so map shows all shapes)
         new_props = dict(props)
+        
         new_props.update({
             "fips":      fips,
             "STATE":     props.get("STATE", fips[:2]),
@@ -84,9 +85,9 @@ def attach_props(geojson: dict, metrics_by_fips: dict, layer: str) -> dict:
             "w_pm25":    float(m.get("w_pm25",   0.18))  if m else 0.18,
             "w_poverty": float(m.get("w_poverty", 0.14)) if m else 0.14,
             "w_access":  float(m.get("w_access", -0.20)) if m else -0.20,
-            "pm25":      float(m.get("pm25",    0.5)) if m else 0.5,
-            "poverty":   float(m.get("poverty", 0.5)) if m else 0.5,
-            "access":    float(m.get("access",  0.5)) if m else 0.5,
+            "pm25":      float(m.get("pm25") or 0.5) if m else 0.5,
+            "poverty":   float(m.get("poverty") or 0.5) if m else 0.5,
+            "access":    float(m.get("access") or 0.5) if m else 0.5,
         })
 
         out["features"].append({
