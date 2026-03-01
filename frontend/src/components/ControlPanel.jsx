@@ -16,7 +16,7 @@ export default function ControlPanel({ layer, scenario, setScenario, tab, setTab
         </div>
 
         {[
-          { key: 'dPm25',   label: 'PM2.5 Δ',          min: -0.2, max: 0.2, step: 0.01, fmt: v => `${v > 0 ? '+' : ''}${Math.round(v * 100)}%` },
+          { key: 'dPm25',   label: 'PM2.5 Δ',           min: -0.2, max: 0.2, step: 0.01, fmt: v => `${v > 0 ? '+' : ''}${Math.round(v * 100)}%` },
           { key: 'poverty', label: 'Deprivation Index', min: 0,    max: 1,   step: 0.01, fmt: v => v.toFixed(2) },
           { key: 'access',  label: 'Healthcare Access', min: 0,    max: 1,   step: 0.01, fmt: v => v.toFixed(2) },
         ].map(s => (
@@ -46,7 +46,13 @@ export default function ControlPanel({ layer, scenario, setScenario, tab, setTab
       </div>
 
       {tab === 'map' && (
-        <TopCountiesTab scenario={scenario} layer={layer} selected={selected} onSelect={onSelect} />
+        <TopCountiesTab
+          layer={layer}                 // PASS THE CURRENT LAYER
+          scenario={scenario}
+          selectedState={selectedState}
+          selected={selected}
+          onSelect={onSelect}
+        />
       )}
       {tab === 'equity' && (
         <EquityTab scenario={scenario} layer={layer} onSelect={onSelect} selectedState={selectedState} />
@@ -56,54 +62,132 @@ export default function ControlPanel({ layer, scenario, setScenario, tab, setTab
 }
 
 /**
- * Keep Top Counties placeholder (optional) — you can later wire this to /geojson features.
- * For now it still works and won’t break the demo.
+ * Top Counties (real data)
+ * Shows top 5 counties ONLY for the currently-selected layer.
+ * If a state is selected, rankings are scoped to that state.
  */
-const SAMPLE_COUNTIES = [
-  { fips:'06037', county:'Los Angeles', state:'CA', base_cancer:0.72, base_neuro:0.68, base_amr:0.61, poverty:0.78, access:0.42, pm25:0.81, w_pm25:0.18, w_poverty:0.14, w_access:-0.20 },
-  { fips:'36061', county:'New York',    state:'NY', base_cancer:0.69, base_neuro:0.74, base_amr:0.77, poverty:0.71, access:0.55, pm25:0.76, w_pm25:0.18, w_poverty:0.14, w_access:-0.20 },
-  { fips:'42101', county:'Philadelphia',state:'PA', base_cancer:0.74, base_neuro:0.71, base_amr:0.76, poverty:0.75, access:0.45, pm25:0.73, w_pm25:0.18, w_poverty:0.14, w_access:-0.20 },
-  { fips:'12086', county:'Miami-Dade',  state:'FL', base_cancer:0.67, base_neuro:0.64, base_amr:0.71, poverty:0.68, access:0.48, pm25:0.60, w_pm25:0.18, w_poverty:0.14, w_access:-0.20 },
-  { fips:'06085', county:'Santa Clara', state:'CA', base_cancer:0.38, base_neuro:0.41, base_amr:0.35, poverty:0.30, access:0.85, pm25:0.42, w_pm25:0.18, w_poverty:0.14, w_access:-0.20 },
-]
+function TopCountiesTab({ layer, scenario, selectedState, selected, onSelect }) {
+  const [byLayer, setByLayer] = useState({ cancer: [], neuro: [], amr: [] })
+  const [loading, setLoading] = useState(true)
 
-function baseKey(layer) { return `base_${layer}` }
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
 
-function TopCountiesTab({ scenario, layer, selected, onSelect }) {
-  const palette = LAYER_PALETTES[layer]
-  const scored = SAMPLE_COUNTIES
-    .map(c => ({ ...c, base: c[baseKey(layer)] ?? 0.5, score: scenarioScore({ ...c, base: c[baseKey(layer)] ?? 0.5 }, scenario) }))
-    .sort((a, b) => b.score - a.score)
+    const layers = ['cancer', 'neuro', 'amr']
+    Promise.all(
+      layers.map(l =>
+        fetch(`${API}/geojson?layer=${l}`)
+          .then(r => r.json())
+          .then(gj => (gj.features ?? []).map(f => f.properties))
+          .catch(() => [])
+      )
+    ).then(([cancer, neuro, amr]) => {
+      if (cancelled) return
+      setByLayer({ cancer, neuro, amr })
+      setLoading(false)
+    })
+
+    return () => { cancelled = true }
+  }, []) // fetch once; scenario + state selection handled below
+
+  function inSelectedState(c) {
+    if (!selectedState?.fips) return true
+    const sf = selectedState.fips
+    return c.STATE === sf || (c.fips?.startsWith?.(sf))
+  }
+
+  function top5(layerKey) {
+    const palette = LAYER_PALETTES[layerKey]
+    const rows = (byLayer[layerKey] ?? [])
+      .filter(inSelectedState)
+      .map(c => {
+        const base = c.base ?? 0.3
+        const score = scenarioScore({ ...c, base }, scenario)
+        const barColor = palette[Math.min(palette.length - 1, Math.floor(score * palette.length))]
+        return { ...c, base, score, barColor }
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5)
+
+    return rows
+  }
+
+  const scopedLabel = selectedState?.name ? `in ${selectedState.name}` : 'nationwide'
+
+  // Only render the current layer’s section
+  const section = useMemo(() => {
+    if (layer === 'cancer') return { key: 'cancer', title: 'TOP CANCER RISK COUNTIES', icon: '🧬' }
+    if (layer === 'neuro')  return { key: 'neuro',  title: 'TOP NEURO RISK COUNTIES',  icon: '🧠' }
+    if (layer === 'amr')    return { key: 'amr',    title: 'TOP AMR VULNERABILITY COUNTIES', icon: '🦠' }
+    return null
+  }, [layer])
+
+  const rows = section ? top5(section.key) : []
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '8px 10px' }}>
-      {scored.map((c, i) => {
-        const rl = riskLabel(c.score)
-        const barColor = palette[Math.min(palette.length - 1, Math.floor(c.score * palette.length))]
-        return (
-          <div
-            key={c.fips}
-            className={`county-row${selected?.fips === c.fips ? ' sel' : ''}`}
-            onClick={() => onSelect?.(c)}
-          >
-            <span style={{ fontSize: 10, color: '#444', fontFamily: "'DM Mono',monospace", width: 18 }}>{i + 1}</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {c.county}, {c.state}
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3 }}>
-                <div className="score-bar-bg">
-                  <div className="score-bar-fill" style={{ width: `${Math.min(1, Math.max(0, c.score)) * 100}%`, background: barColor }} />
-                </div>
-                <span style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#777', minWidth: 32 }}>
-                  {(c.score * 100).toFixed(0)}%
-                </span>
-              </div>
+    <div style={{ flex: 1, overflowY: 'auto', padding: '10px 10px' }}>
+      <div style={{ fontSize: 10, color: '#666', fontFamily: "'DM Mono',monospace", letterSpacing: '.08em', margin: '4px 4px 10px' }}>
+        Rankings {scopedLabel} · scenario-adjusted
+      </div>
+
+      {loading && (
+        <div style={{ padding: 12, fontSize: 12, color: '#777' }}>Loading county rankings…</div>
+      )}
+
+      {!loading && section && (
+        <div style={{ marginBottom: 14, padding: '10px 10px', background: 'rgba(255,255,255,0.03)', borderRadius: 10, border: '1px solid rgba(255,255,255,0.06)' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+            <div style={{ fontSize: 11, color: '#bbb', fontFamily: "'DM Mono',monospace", letterSpacing: '.08em' }}>
+              {section.icon} {section.title}
             </div>
-            <span className={`risk-badge ${rl.cls}`}>{rl.text}</span>
+            <div style={{ fontSize: 10, color: '#666', fontFamily: "'DM Mono',monospace" }}>
+              top 5
+            </div>
           </div>
-        )
-      })}
+
+          <div style={{ marginTop: 8 }}>
+            {rows.map((c, i) => {
+              const rl = riskLabel(c.score)
+              return (
+                <div
+                  key={`${section.key}-${c.fips}`}
+                  className={`county-row${selected?.fips === c.fips ? ' sel' : ''}`}
+                  onClick={() => onSelect?.(c)}
+                >
+                  <span style={{ fontSize: 10, color: '#444', fontFamily: "'DM Mono',monospace", width: 18 }}>{i + 1}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {c.county || c.NAME || 'County'}{c.state ? `, ${c.state}` : ''}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3 }}>
+                      <div className="score-bar-bg">
+                        <div className="score-bar-fill" style={{ width: `${Math.min(1, Math.max(0, c.score)) * 100}%`, background: c.barColor }} />
+                      </div>
+                      <span style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#777', minWidth: 32 }}>
+                        {(c.score * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                  </div>
+                  <span className={`risk-badge ${rl.cls}`}>{rl.text}</span>
+                </div>
+              )
+            })}
+
+            {rows.length === 0 && (
+              <div style={{ padding: 10, fontSize: 11, color: '#666' }}>
+                No county data found for this scope.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {!loading && !section && (
+        <div style={{ padding: 12, fontSize: 12, color: '#777' }}>
+          Unknown layer: {String(layer)}
+        </div>
+      )}
     </div>
   )
 }
