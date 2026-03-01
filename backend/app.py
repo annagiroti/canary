@@ -90,14 +90,15 @@ def scenario_score(row: pd.Series, layer: str, dPm25: float, poverty: float, acc
     dep_mult = float(poverty)
     acc_mult = float(access)
 
-    score = (
-        base
-        + w_pm25 * pm25_eff
-        + (w_dep * dep_mult) * dep
-        + (w_low_access * acc_mult) * low_access
-    )
+    raw = (
+        0.55 * base
+        + 0.20 * (w_pm25 * pm25_eff)
+        + 0.15 * ((w_dep * dep_mult) * dep)
+        + 0.10 * ((w_low_access * acc_mult) * low_access)
 
-    return float(max(0.0, min(1.0, score)))
+
+    )
+    return float(max(0.0, min(1.0, raw)))
 
 
 def attach_props(counties_gj: dict, metrics_by_fips: dict, layer: str) -> dict:
