@@ -8,16 +8,12 @@ export const LAYER_META = {
   cancer: { label: 'Cancer Risk',       icon: '⬡', desc: 'Composite cancer vulnerability from pollution, poverty, and care access.' },
   neuro:  { label: 'Neuro Risk',        icon: '◈', desc: 'Neurological disorder risk linked to PM2.5 exposure and socioeconomic stress.' },
   amr:    { label: 'AMR Vulnerability', icon: '⬟', desc: 'Antimicrobial resistance burden — access gaps and climate-linked infection pressure.' },
-  // NEW
-  equity: { label: 'Equity Gap',        icon: '⬢', desc: 'Structural inequity: high health risk + high deprivation + low healthcare access.' },
 }
 
 export const LAYER_PALETTES = {
   cancer: ['#fef9c3','#fde047','#f97316','#dc2626','#7f1d1d'],
   neuro:  ['#ede9fe','#a78bfa','#7c3aed','#4c1d95','#1e1b4b'],
   amr:    ['#d1fae5','#34d399','#059669','#065f46','#022c22'],
-  // NEW (yellow → red works well for inequity)
-  equity: ['#fef9c3','#fde047','#fb923c','#ef4444','#7f1d1d'],
 }
 
 export function riskLabel(s) {
