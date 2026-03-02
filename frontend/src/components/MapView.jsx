@@ -10,6 +10,7 @@ const COLOR_STOPS = {
   cancer: [0, '#fef9c3', 0.25, '#fde047', 0.5, '#f97316', 0.75, '#dc2626', 1, '#7f1d1d'],
   neuro:  [0, '#ede9fe', 0.25, '#a78bfa', 0.5, '#7c3aed', 0.75, '#4c1d95', 1, '#1e1b4b'],
   amr:    [0, '#d1fae5', 0.25, '#34d399', 0.5, '#059669', 0.75, '#065f46', 1, '#022c22'],
+  equity: [0, '#fef9c3', 0.25, '#fde047', 0.5, '#fb923c', 0.75, '#ef4444', 1, '#7f1d1d'],
 }
 
 // US state name → 2-digit FIPS code
@@ -29,7 +30,7 @@ const STATE_NAME_TO_FIPS = {
   'Wisconsin': '55', 'Wyoming': '56', 'Puerto Rico': '72',
 }
 
-export default function MapView({ layer, scenario, onHover, onSelect, onStateChange }) {
+export default function MapView({ layer, scenario, onHover, onSelect }) {
   const containerRef = useRef(null)
   const mapRef       = useRef(null)
 
@@ -38,7 +39,6 @@ export default function MapView({ layer, scenario, onHover, onSelect, onStateCha
   const [mapReady, setMapReady] = useState(false)
 
   const [selectedState, setSelectedState] = useState(null) // { name, fips }
-  useEffect(() => { onStateChange?.(selectedState) }, [selectedState])
 
   const hoveredStateId = useRef(null)
   const hoveredCountyId = useRef(null)
@@ -158,8 +158,8 @@ export default function MapView({ layer, scenario, onHover, onSelect, onStateCha
         source: 'counties',
         layout: { visibility: 'none' },
         paint: {
-          'line-color': 'rgba(255,255,255,0.28)',
-          'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.2, 5, 0.45, 7, 0.85, 9, 1.25],
+          'line-color': 'rgba(255,255,255,0.35)',
+          'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.35, 6, 0.9, 9, 1.6],
         },
       })
 
@@ -315,6 +315,8 @@ export default function MapView({ layer, scenario, onHover, onSelect, onStateCha
 
     const stops = COLOR_STOPS[layer]
 
+    // temp
+    console.log("Sample county props:", geo.features[0]?.properties)
     // Filter counties to selected state only
     const features = selectedState
       ? geo.features.filter(f => f.properties?.STATE === selectedState.fips || f.properties?.fips?.startsWith(selectedState.fips))
@@ -378,7 +380,7 @@ export default function MapView({ layer, scenario, onHover, onSelect, onStateCha
 
 function Legend({ layer }) {
   const palette = LAYER_PALETTES[layer]
-  const labels = { cancer: 'Cancer Risk', neuro: 'Neuro Risk', amr: 'AMR Vulnerability' }
+  const labels = { cancer: 'Cancer Risk', neuro: 'Neuro Risk', amr: 'AMR Vulnerability', equity: 'Equity Gap' }
   return (
     <div style={{
       position: 'absolute', bottom: 28, left: 16,

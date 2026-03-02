@@ -109,7 +109,7 @@ function TopCountiesTab({ layer, scenario, selectedState, selected, onSelect }) 
       .filter(inSelectedState)
       .map(c => {
         const base = c.base ?? 0.3
-        const score = scenarioScore({ ...c, base }, scenario)
+        const score = Math.min(1, Math.max(0, scenarioScore({ ...c, base }, scenario)))
         const barColor = palette[Math.min(palette.length - 1, Math.floor(score * palette.length))]
         return { ...c, base, score, barColor }
       })
@@ -238,9 +238,19 @@ function EquityTab({ scenario, layer, onSelect, selectedState }) {
   const gap = summary?.deprivation_gap ?? 0
   const avgHigh = summary?.group_avgs?.high_dep ?? 0
   const avgLow  = summary?.group_avgs?.low_dep ?? 0
-
   const drivers = summary?.drivers ?? { pm25_gap: 0, deprivation_gap: 0, low_access_gap: 0 }
   const policy = summary?.policy ?? { targeted_pm25_cleanup: false, gap_before: gap, gap_after: gap, delta: 0 }
+
+  // Uncertainty proxy
+  const dq = summary?.data_quality ?? null
+  const overallCompleteness = dq?.overall ?? 0
+  const fieldCompleteness = dq?.fields ?? { pm25: 0, deprivation: 0, access: 0 }
+  const nCounties = dq?.n_counties ?? 0
+
+  const completenessLabel =
+    overallCompleteness >= 0.9 ? { text: 'High', cls: 'low' } :
+    overallCompleteness >= 0.7 ? { text: 'Medium', cls: 'moderate' } :
+    { text: 'Low', cls: 'high' }
 
   const driverRows = useMemo(() => ([
     { k: 'pm25_gap', label: 'Pollution exposure gap', val: drivers.pm25_gap },
@@ -259,6 +269,7 @@ function EquityTab({ scenario, layer, onSelect, selectedState }) {
 
       {!loading && !err && summary && (
         <>
+          {/* Core inequity card */}
           <div style={{ background: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.2)', borderRadius: 8, padding: '12px 14px', marginBottom: 12 }}>
             <div style={{ fontSize: 10, color: '#888', marginBottom: 4 }}>
               Inequity Gap (high vs low deprivation)
@@ -267,10 +278,43 @@ function EquityTab({ scenario, layer, onSelect, selectedState }) {
               {gap.toFixed(3)}
             </div>
             <div style={{ fontSize: 10, color: '#666', marginTop: 6, lineHeight: 1.5 }}>
-              High-deprivation counties carry higher climate-linked {LAYER_META[layer].label.toLowerCase()} burden under the current scenario.
+              Use for *resource allocation* and *upstream interventions* — not individual-level clinical decisions.
             </div>
           </div>
 
+          {/* Data completeness / uncertainty proxy */}
+          <div style={{ marginBottom: 12, padding: '12px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: 8, border: '1px solid rgba(255,255,255,0.06)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#555', letterSpacing: '.08em' }}>
+                DATA COMPLETENESS (CONFIDENCE PROXY)
+              </div>
+              <span className={`risk-badge ${completenessLabel.cls}`}>{completenessLabel.text}</span>
+            </div>
+
+            <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#bbb' }}>
+              <span>Overall</span>
+              <span style={{ fontFamily: "'DM Mono',monospace" }}>{(overallCompleteness * 100).toFixed(0)}%</span>
+            </div>
+
+            <div style={{ marginTop: 10, fontSize: 10, color: '#666', lineHeight: 1.5 }}>
+              Based on % counties with non-missing <span style={{ fontFamily: "'DM Mono',monospace" }}>pm25</span>, <span style={{ fontFamily: "'DM Mono',monospace" }}>deprivation</span>, and <span style={{ fontFamily: "'DM Mono',monospace" }}>access</span> ({nCounties} counties in scope).
+            </div>
+
+            <div style={{ marginTop: 10 }}>
+              {[
+                { label: 'PM2.5', val: fieldCompleteness.pm25 },
+                { label: 'Deprivation', val: fieldCompleteness.deprivation },
+                { label: 'Access', val: fieldCompleteness.access },
+              ].map(r => (
+                <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#bbb', marginTop: 6 }}>
+                  <span>{r.label}</span>
+                  <span style={{ fontFamily: "'DM Mono',monospace" }}>{(Number(r.val) * 100).toFixed(0)}%</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Group averages */}
           {[
             { label: 'High-deprivation counties (avg)', val: avgHigh, color: '#f97316' },
             { label: 'Low-deprivation counties (avg)',  val: avgLow,  color: '#34d399' },
@@ -286,6 +330,7 @@ function EquityTab({ scenario, layer, onSelect, selectedState }) {
             </div>
           ))}
 
+          {/* Driver decomposition */}
           <div style={{ marginTop: 14, padding: '12px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: 8, border: '1px solid rgba(255,255,255,0.06)' }}>
             <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#555', marginBottom: 8, letterSpacing: '.08em' }}>
               WHAT DRIVES THE GAP
@@ -303,10 +348,11 @@ function EquityTab({ scenario, layer, onSelect, selectedState }) {
             </div>
           </div>
 
+          {/* Policy simulation */}
           <div style={{ marginTop: 14, padding: '12px 14px', background: 'rgba(124,58,237,0.08)', borderRadius: 8, border: '1px solid rgba(124,58,237,0.22)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
               <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#b9a3ff', letterSpacing: '.08em' }}>
-                POLICY SIMULATION
+                POLICY SIMULATION (ILLUSTRATIVE)
               </div>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#bbb' }}>
                 <input type="checkbox" checked={policyOn} onChange={e => setPolicyOn(e.target.checked)} />
@@ -315,7 +361,7 @@ function EquityTab({ scenario, layer, onSelect, selectedState }) {
             </div>
 
             <div style={{ fontSize: 11, color: '#777', marginBottom: 8, lineHeight: 1.5 }}>
-              Applies an additional 20% PM2.5 reduction only in the highest-deprivation counties.
+              Applies an additional 20% PM2.5 reduction only in the highest-deprivation counties. This is a “what-if” scenario, not a causal claim.
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#bbb' }}>
@@ -332,6 +378,7 @@ function EquityTab({ scenario, layer, onSelect, selectedState }) {
             </div>
           </div>
 
+          {/* Top underserved */}
           <div style={{ marginTop: 14 }}>
             <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#555', marginBottom: 8, letterSpacing: '.08em' }}>
               TOP UNDER-RESOURCED COUNTIES
@@ -357,11 +404,25 @@ function EquityTab({ scenario, layer, onSelect, selectedState }) {
             ))}
           </div>
 
+          {/* Bioethics framing */}
           <div style={{ marginTop: 16, padding: '12px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: 8, borderLeft: '3px solid #7c3aed' }}>
             <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#555', marginBottom: 6 }}>BIOETHICS NOTE</div>
             <div style={{ fontSize: 11, color: '#777', lineHeight: 1.6 }}>
-              Risk and equity scores reflect structural conditions (exposure + access), not individual blame. This tool is intended to guide upstream interventions and resource allocation.
+              Risk and equity scores reflect structural conditions (exposure + access), not individual blame. Use for resource allocation and upstream interventions; not for individual-level clinical decisions or punitive policy.
             </div>
+          </div>
+
+          {/* A) Data + model limitations panel (judge-facing) */}
+          <div style={{ marginTop: 12, padding: '12px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: 8, border: '1px solid rgba(255,255,255,0.06)' }}>
+            <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#555', marginBottom: 8, letterSpacing: '.08em' }}>
+              DATA + MODEL LIMITATIONS
+            </div>
+            <ul style={{ marginLeft: 16, color: '#777', fontSize: 11, lineHeight: 1.6 }}>
+              <li>County-level proxies (ecological analysis) — not individual risk.</li>
+              <li>Missingness + reporting bias may vary by region.</li>
+              <li>Correlation ≠ causation; policy simulation is illustrative “what-if”.</li>
+              <li>Do not use for denial of care, surveillance, or punitive policy decisions.</li>
+            </ul>
           </div>
         </>
       )}
