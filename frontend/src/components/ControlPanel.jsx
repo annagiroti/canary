@@ -47,15 +47,21 @@ export default function ControlPanel({ layer, scenario, setScenario, tab, setTab
 
       {tab === 'map' && (
         <TopCountiesTab
-          layer={layer}                 // PASS THE CURRENT LAYER
+          layer={layer}
           scenario={scenario}
           selectedState={selectedState}
           selected={selected}
           onSelect={onSelect}
         />
       )}
+
       {tab === 'equity' && (
-        <EquityTab scenario={scenario} layer={layer} onSelect={onSelect} selectedState={selectedState} />
+        <EquityTab
+          scenario={scenario}
+          layer={layer}
+          onSelect={onSelect}
+          selectedState={selectedState}
+        />
       )}
     </div>
   )
@@ -89,7 +95,7 @@ function TopCountiesTab({ layer, scenario, selectedState, selected, onSelect }) 
     })
 
     return () => { cancelled = true }
-  }, []) // fetch once; scenario + state selection handled below
+  }, [])
 
   function inSelectedState(c) {
     if (!selectedState?.fips) return true
@@ -115,7 +121,6 @@ function TopCountiesTab({ layer, scenario, selectedState, selected, onSelect }) 
 
   const scopedLabel = selectedState?.name ? `in ${selectedState.name}` : 'nationwide'
 
-  // Only render the current layer’s section
   const section = useMemo(() => {
     if (layer === 'cancer') return { key: 'cancer', title: 'TOP CANCER RISK COUNTIES', icon: '🧬' }
     if (layer === 'neuro')  return { key: 'neuro',  title: 'TOP NEURO RISK COUNTIES',  icon: '🧠' }
@@ -235,7 +240,6 @@ function EquityTab({ scenario, layer, onSelect, selectedState }) {
   const avgLow  = summary?.group_avgs?.low_dep ?? 0
 
   const drivers = summary?.drivers ?? { pm25_gap: 0, deprivation_gap: 0, low_access_gap: 0 }
-
   const policy = summary?.policy ?? { targeted_pm25_cleanup: false, gap_before: gap, gap_after: gap, delta: 0 }
 
   const driverRows = useMemo(() => ([
@@ -250,16 +254,11 @@ function EquityTab({ scenario, layer, onSelect, selectedState }) {
         STRUCTURAL INEQUITY ANALYSIS
       </div>
 
-      {loading && (
-        <div style={{ fontSize: 11, color: '#777' }}>Loading equity metrics…</div>
-      )}
-      {err && (
-        <div style={{ fontSize: 11, color: '#fca5a5' }}>Equity endpoint error: {err}</div>
-      )}
+      {loading && <div style={{ fontSize: 11, color: '#777' }}>Loading equity metrics…</div>}
+      {err && <div style={{ fontSize: 11, color: '#fca5a5' }}>Equity endpoint error: {err}</div>}
 
       {!loading && !err && summary && (
         <>
-          {/* Core inequity card */}
           <div style={{ background: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.2)', borderRadius: 8, padding: '12px 14px', marginBottom: 12 }}>
             <div style={{ fontSize: 10, color: '#888', marginBottom: 4 }}>
               Inequity Gap (high vs low deprivation)
@@ -272,7 +271,6 @@ function EquityTab({ scenario, layer, onSelect, selectedState }) {
             </div>
           </div>
 
-          {/* Group averages */}
           {[
             { label: 'High-deprivation counties (avg)', val: avgHigh, color: '#f97316' },
             { label: 'Low-deprivation counties (avg)',  val: avgLow,  color: '#34d399' },
@@ -288,7 +286,6 @@ function EquityTab({ scenario, layer, onSelect, selectedState }) {
             </div>
           ))}
 
-          {/* Driver decomposition */}
           <div style={{ marginTop: 14, padding: '12px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: 8, border: '1px solid rgba(255,255,255,0.06)' }}>
             <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#555', marginBottom: 8, letterSpacing: '.08em' }}>
               WHAT DRIVES THE GAP
@@ -306,7 +303,6 @@ function EquityTab({ scenario, layer, onSelect, selectedState }) {
             </div>
           </div>
 
-          {/* Policy simulation */}
           <div style={{ marginTop: 14, padding: '12px 14px', background: 'rgba(124,58,237,0.08)', borderRadius: 8, border: '1px solid rgba(124,58,237,0.22)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
               <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#b9a3ff', letterSpacing: '.08em' }}>
@@ -336,7 +332,6 @@ function EquityTab({ scenario, layer, onSelect, selectedState }) {
             </div>
           </div>
 
-          {/* Top underserved */}
           <div style={{ marginTop: 14 }}>
             <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#555', marginBottom: 8, letterSpacing: '.08em' }}>
               TOP UNDER-RESOURCED COUNTIES
@@ -362,7 +357,6 @@ function EquityTab({ scenario, layer, onSelect, selectedState }) {
             ))}
           </div>
 
-          {/* Bioethics framing */}
           <div style={{ marginTop: 16, padding: '12px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: 8, borderLeft: '3px solid #7c3aed' }}>
             <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#555', marginBottom: 6 }}>BIOETHICS NOTE</div>
             <div style={{ fontSize: 11, color: '#777', lineHeight: 1.6 }}>
