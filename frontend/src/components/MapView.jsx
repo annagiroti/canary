@@ -10,7 +10,6 @@ const COLOR_STOPS = {
   cancer: [0, '#fef9c3', 0.25, '#fde047', 0.5, '#f97316', 0.75, '#dc2626', 1, '#7f1d1d'],
   neuro:  [0, '#ede9fe', 0.25, '#a78bfa', 0.5, '#7c3aed', 0.75, '#4c1d95', 1, '#1e1b4b'],
   amr:    [0, '#d1fae5', 0.25, '#34d399', 0.5, '#059669', 0.75, '#065f46', 1, '#022c22'],
-  equity: [0, '#fef9c3', 0.25, '#fde047', 0.5, '#fb923c', 0.75, '#ef4444', 1, '#7f1d1d'],
 }
 
 // US state name → 2-digit FIPS code
@@ -30,15 +29,13 @@ const STATE_NAME_TO_FIPS = {
   'Wisconsin': '55', 'Wyoming': '56', 'Puerto Rico': '72',
 }
 
-export default function MapView({ layer, scenario, onHover, onSelect }) {
+export default function MapView({ layer, scenario, onHover, onSelect, selectedState, setSelectedState }) {
   const containerRef = useRef(null)
-  const mapRef       = useRef(null)
+  const mapRef = useRef(null)
 
-  const [geo, setGeo] = useState(null)         // county GeoJSON (from backend)
-  const [stateGeo, setStateGeo] = useState(null) // state GeoJSON (from backend)
+  const [geo, setGeo] = useState(null)
+  const [stateGeo, setStateGeo] = useState(null)
   const [mapReady, setMapReady] = useState(false)
-
-  const [selectedState, setSelectedState] = useState(null) // { name, fips }
 
   const hoveredStateId = useRef(null)
   const hoveredCountyId = useRef(null)
@@ -51,7 +48,7 @@ export default function MapView({ layer, scenario, onHover, onSelect }) {
       .catch(() => console.warn('Backend not available'))
   }, [layer])
 
-  // Fetch state GeoJSON from backend
+  // Fetch state GeoJSON
   useEffect(() => {
     fetch(`${API}/states`)
       .then(r => r.json())
@@ -59,21 +56,17 @@ export default function MapView({ layer, scenario, onHover, onSelect }) {
       .catch(() => console.warn('States endpoint not available'))
   }, [])
 
-  // Zoom back out to full US
   const zoomOut = useCallback(() => {
     const map = mapRef.current
     if (!map) return
-    setSelectedState(null)
 
+    setSelectedState?.(null)
     map.flyTo({ center: [-98.5, 39.8], zoom: 3.2, duration: 800 })
 
-    // Show states, hide counties
     if (map.getLayer('counties-fill')) {
       map.setLayoutProperty('counties-fill', 'visibility', 'none')
       map.setLayoutProperty('counties-line', 'visibility', 'none')
-      if (map.getLayer('counties-hover-line')) {
-        map.setLayoutProperty('counties-hover-line', 'visibility', 'none')
-      }
+      map.setLayoutProperty('counties-hover-line', 'visibility', 'none')
     }
     if (map.getLayer('states-fill')) {
       map.setLayoutProperty('states-fill', 'visibility', 'visible')
@@ -81,11 +74,10 @@ export default function MapView({ layer, scenario, onHover, onSelect }) {
       map.setLayoutProperty('states-hover', 'visibility', 'visible')
     }
 
-    // clear hover tooltip
     onHover?.(null)
-  }, [onHover])
+  }, [onHover, setSelectedState])
 
-  // Init map
+  // Init map once
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
 
@@ -99,88 +91,38 @@ export default function MapView({ layer, scenario, onHover, onSelect }) {
     mapRef.current = map
 
     map.on('load', () => {
-      // ── State source ──────────────────────────────────────────
-      map.addSource('states', {
-        type: 'geojson',
-        data: { type: 'FeatureCollection', features: [] },
-        generateId: true,
-      })
-
-      // State fill (base)
-      map.addLayer({
-        id: 'states-fill',
-        type: 'fill',
-        source: 'states',
-        paint: {
-          'fill-color': 'rgba(124,58,237,0.18)',
-          'fill-opacity': 1,
-        },
-      })
-
-      // State hover highlight
+      map.addSource('states', { type: 'geojson', data: { type: 'FeatureCollection', features: [] }, generateId: true })
+      map.addLayer({ id: 'states-fill', type: 'fill', source: 'states', paint: { 'fill-color': 'rgba(124,58,237,0.18)', 'fill-opacity': 0.75 } })
       map.addLayer({
         id: 'states-hover',
         type: 'fill',
         source: 'states',
-        paint: {
-          'fill-color': 'rgba(124,58,237,0.45)',
-          'fill-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 1, 0],
-        },
+        paint: { 'fill-color': 'rgba(124,58,237,0.45)', 'fill-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 1, 0] },
       })
+      map.addLayer({ id: 'states-line', type: 'line', source: 'states', paint: { 'line-color': 'rgba(200,180,255,0.9)', 'line-width': 1.5 } })
 
-      // State borders
-      map.addLayer({
-        id: 'states-line',
-        type: 'line',
-        source: 'states',
-        paint: { 'line-color': 'rgba(200,180,255,0.9)', 'line-width': 1.5 },
-      })
-
-      // ── County source (hidden until drill-in) ─────────────────
-      map.addSource('counties', {
-        type: 'geojson',
-        data: { type: 'FeatureCollection', features: [] },
-        generateId: true, // required for feature-state hover
-      })
-
-      map.addLayer({
-        id: 'counties-fill',
-        type: 'fill',
-        source: 'counties',
-        layout: { visibility: 'none' },
-        paint: { 'fill-color': '#334', 'fill-opacity': 0.85 },
-      })
-
-      // County borders (make them readable)
+      map.addSource('counties', { type: 'geojson', data: { type: 'FeatureCollection', features: [] }, generateId: true })
+      map.addLayer({ id: 'counties-fill', type: 'fill', source: 'counties', layout: { visibility: 'none' }, paint: { 'fill-color': '#334', 'fill-opacity': 0.85 } })
       map.addLayer({
         id: 'counties-line',
         type: 'line',
         source: 'counties',
         layout: { visibility: 'none' },
-        paint: {
-          'line-color': 'rgba(255,255,255,0.35)',
-          'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.35, 6, 0.9, 9, 1.6],
-        },
+        paint: { 'line-color': 'rgba(255,255,255,0.35)', 'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.35, 6, 0.9, 9, 1.6] },
       })
-
-      // County hover outline (crisp highlight)
       map.addLayer({
         id: 'counties-hover-line',
         type: 'line',
         source: 'counties',
         layout: { visibility: 'none' },
-        paint: {
-          'line-color': 'rgba(255,255,255,0.85)',
-          'line-width': ['interpolate', ['linear'], ['zoom'], 3, 1.0, 6, 1.8, 9, 3.0],
-        },
+        paint: { 'line-color': 'rgba(255,255,255,0.85)', 'line-width': ['interpolate', ['linear'], ['zoom'], 3, 1.0, 6, 1.8, 9, 3.0] },
         filter: ['boolean', ['feature-state', 'hover'], false],
       })
 
-      // ── State interactions ────────────────────────────────────
+      // State hover
       map.on('mousemove', 'states-fill', e => {
         map.getCanvas().style.cursor = 'pointer'
         const id = e.features?.[0]?.id
-
         if (hoveredStateId.current !== null && hoveredStateId.current !== id) {
           map.setFeatureState({ source: 'states', id: hoveredStateId.current }, { hover: false })
         }
@@ -190,7 +132,7 @@ export default function MapView({ layer, scenario, onHover, onSelect }) {
         }
 
         const name = e.features?.[0]?.properties?.name
-        onHover?.({ point: e.point, lngLat: e.lngLat, props: { county: name, state: '', isState: true } })
+        onHover?.({ point: e.point, lngLat: e.lngLat, props: { county: name, isState: true } })
       })
 
       map.on('mouseleave', 'states-fill', () => {
@@ -202,13 +144,13 @@ export default function MapView({ layer, scenario, onHover, onSelect }) {
         onHover?.(null)
       })
 
+      // State click drill-in
       map.on('click', 'states-fill', e => {
         const name = e.features?.[0]?.properties?.name
         if (!name) return
         const fips = STATE_NAME_TO_FIPS[name]
         if (!fips) return
 
-        // Zoom to state bounds (handles multipolygons)
         const bounds = new maplibregl.LngLatBounds()
         const geom = e.features?.[0]?.geometry
         if (geom?.type === 'Polygon') {
@@ -218,11 +160,10 @@ export default function MapView({ layer, scenario, onHover, onSelect }) {
         }
         map.fitBounds(bounds, { padding: 60, duration: 800 })
 
-        setSelectedState({ name, fips })
+        setSelectedState?.({ name, fips })
 
-        // Hide states, show counties
-        map.setLayoutProperty('states-fill',  'visibility', 'none')
-        map.setLayoutProperty('states-line',  'visibility', 'none')
+        map.setLayoutProperty('states-fill', 'visibility', 'none')
+        map.setLayoutProperty('states-line', 'visibility', 'none')
         map.setLayoutProperty('states-hover', 'visibility', 'none')
 
         map.setLayoutProperty('counties-fill', 'visibility', 'visible')
@@ -230,13 +171,12 @@ export default function MapView({ layer, scenario, onHover, onSelect }) {
         map.setLayoutProperty('counties-hover-line', 'visibility', 'visible')
       })
 
-      // ── County interactions ───────────────────────────────────
+      // County hover/click
       map.on('mousemove', 'counties-fill', e => {
         map.getCanvas().style.cursor = 'pointer'
         const f = e.features?.[0]
         const id = f?.id
 
-        // Toggle hover state to drive hover outline layer
         if (hoveredCountyId.current !== null && hoveredCountyId.current !== id) {
           map.setFeatureState({ source: 'counties', id: hoveredCountyId.current }, { hover: false })
         }
@@ -265,17 +205,19 @@ export default function MapView({ layer, scenario, onHover, onSelect }) {
       setMapReady(true)
     })
 
-    return () => { map.remove(); mapRef.current = null }
-  }, [onHover, onSelect])
+    return () => {
+      map.remove()
+      mapRef.current = null
+    }
+  }, [onHover, onSelect, setSelectedState])
 
-  // Load state GeoJSON + color by avg county risk score
+  // Push state geojson + color by avg county score
   useEffect(() => {
     const map = mapRef.current
     if (!map || !mapReady || !stateGeo) return
 
-    // Compute avg score per state from county data
     const stateTotals = {}
-    if (geo) {
+    if (geo?.features) {
       geo.features.forEach(ft => {
         const stateFips = ft.properties?.STATE || ft.properties?.fips?.slice(0, 2)
         if (!stateFips) return
@@ -286,7 +228,6 @@ export default function MapView({ layer, scenario, onHover, onSelect }) {
       })
     }
 
-    // Attach avg_score to each state feature
     const enriched = {
       ...stateGeo,
       features: stateGeo.features.map(f => {
@@ -300,26 +241,18 @@ export default function MapView({ layer, scenario, onHover, onSelect }) {
 
     map.getSource('states')?.setData(enriched)
 
-    // Color states by avg_score using same ramp as counties
     const stops = COLOR_STOPS[layer]
-    map.setPaintProperty('states-fill', 'fill-color', [
-      'interpolate', ['linear'], ['get', 'avg_score'], ...stops,
-    ])
-    map.setPaintProperty('states-fill', 'fill-opacity', 0.75)
+    map.setPaintProperty('states-fill', 'fill-color', ['interpolate', ['linear'], ['get', 'avg_score'], ...stops])
   }, [stateGeo, mapReady, geo, scenario, layer])
 
-  // Update county choropleth when layer/scenario/selectedState changes
+  // Update counties source (scoped to selectedState if present)
   useEffect(() => {
     const map = mapRef.current
-    if (!map || !mapReady || !geo) return
+    if (!map || !mapReady || !geo?.features) return
 
     const stops = COLOR_STOPS[layer]
-
-    // temp
-    console.log("Sample county props:", geo.features[0]?.properties)
-    // Filter counties to selected state only
     const features = selectedState
-      ? geo.features.filter(f => f.properties?.STATE === selectedState.fips || f.properties?.fips?.startsWith(selectedState.fips))
+      ? geo.features.filter(f => f.properties?.STATE === selectedState.fips || f.properties?.fips?.startsWith?.(selectedState.fips))
       : geo.features
 
     const scored = {
@@ -331,17 +264,13 @@ export default function MapView({ layer, scenario, onHover, onSelect }) {
     }
 
     map.getSource('counties')?.setData(scored)
-
-    map.setPaintProperty('counties-fill', 'fill-color', [
-      'interpolate', ['linear'], ['get', 'score'], ...stops,
-    ])
+    map.setPaintProperty('counties-fill', 'fill-color', ['interpolate', ['linear'], ['get', 'score'], ...stops])
   }, [geo, scenario, layer, mapReady, selectedState])
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
 
-      {/* Back button — only shown when drilled into a state */}
       {selectedState && (
         <button
           onClick={zoomOut}
@@ -350,17 +279,13 @@ export default function MapView({ layer, scenario, onHover, onSelect }) {
             background: 'rgba(8,9,14,0.92)', border: '1px solid rgba(255,255,255,0.15)',
             color: '#e8e8f0', borderRadius: 8, padding: '8px 16px',
             cursor: 'pointer', fontSize: 12, fontFamily: "'DM Mono',monospace",
-            backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: 8,
-            transition: 'all .2s',
+            backdropFilter: 'blur(8px)',
           }}
-          onMouseEnter={e => e.currentTarget.style.background = 'rgba(124,58,237,0.3)'}
-          onMouseLeave={e => e.currentTarget.style.background = 'rgba(8,9,14,0.92)'}
         >
           ← {selectedState.name}
         </button>
       )}
 
-      {/* Hint shown on state view */}
       {!selectedState && (
         <div style={{
           position: 'absolute', bottom: 80, left: '50%', transform: 'translateX(-50%)',
@@ -380,7 +305,7 @@ export default function MapView({ layer, scenario, onHover, onSelect }) {
 
 function Legend({ layer }) {
   const palette = LAYER_PALETTES[layer]
-  const labels = { cancer: 'Cancer Risk', neuro: 'Neuro Risk', amr: 'AMR Vulnerability', equity: 'Equity Gap' }
+  const labels = { cancer: 'Cancer Risk', neuro: 'Neuro Risk', amr: 'AMR Vulnerability' }
   return (
     <div style={{
       position: 'absolute', bottom: 28, left: 16,
@@ -388,7 +313,7 @@ function Legend({ layer }) {
       borderRadius: 8, padding: '10px 14px', backdropFilter: 'blur(8px)', pointerEvents: 'none',
     }}>
       <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#555', marginBottom: 8, letterSpacing: '.1em' }}>
-        {labels[layer].toUpperCase()} INDEX
+        {(labels[layer] || 'RISK').toUpperCase()} INDEX
       </div>
       <div style={{ display: 'flex', gap: 2, marginBottom: 6 }}>
         {palette.map((c, i) => <div key={i} style={{ width: 24, height: 8, borderRadius: 2, background: c }} />)}

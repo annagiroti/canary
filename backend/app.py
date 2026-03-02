@@ -9,7 +9,7 @@ from typing import Optional, Dict, Any
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 
-app = FastAPI(title="Canary Backend", version="0.4.0")
+app = FastAPI(title="Canary Backend", version="0.3.1")
 
 app.add_middleware(
     CORSMiddleware,
@@ -81,8 +81,10 @@ def extract_fips_from_props(props: dict) -> str:
 
 def scenario_score(row: pd.Series, layer: str, dPm25: float, poverty: float, access: float) -> float:
     """
-    Produces a 0..1 score from base risk + (pm25, deprivation, low_access) terms.
-    Scenario controls act as: dPm25 delta + (poverty/access) multipliers.
+    0..1 score from:
+      base risk + pm25 + deprivation + low_access
+    Scenario controls:
+      dPm25 (delta), poverty/access multipliers (0..1)
     """
     base = float(row.get(f"base_{layer}", row.get("base", 0.3)) or 0.3)
 
@@ -126,10 +128,8 @@ def attach_props(counties_gj: dict, metrics_by_fips: Dict[str, Dict[str, Any]], 
         new_props.update({
             "fips": fips,
             "STATE": props.get("STATE", fips[:2]),
-
             "county": m.get("county", props.get("NAME", "")) or props.get("NAME", ""),
             "state": m.get("state", "") or props.get("STATE", ""),
-
             "base": float(m.get(base_key, 0.3) or 0.3),
 
             "w_pm25": float(m.get("w_pm25", 1.0) or 1.0),
@@ -192,47 +192,6 @@ def metrics(fips: str):
     return {"fips": f, "metrics": idx.get(f)}
 
 
-def compute_data_quality(df: pd.DataFrame) -> Dict[str, Any]:
-    """
-    Heuristic uncertainty proxy: completeness of key drivers.
-    Returns overall completeness + per-field completeness.
-    """
-    fields = ["pm25", "deprivation", "access"]
-    n = int(len(df))
-    if n == 0:
-        return {
-            "n_counties": 0,
-            "fields": {k: 0.0 for k in fields},
-            "overall": 0.0,
-            "notes": ["No rows after filtering (check state_fips)."]
-        }
-
-    present = {}
-    for c in fields:
-        if c not in df.columns:
-            present[c] = 0.0
-        else:
-            present[c] = float(df[c].notna().mean())
-
-    # overall: rows that have all key fields present
-    if all(c in df.columns for c in fields):
-        overall = float(df[fields].notna().all(axis=1).mean())
-    else:
-        overall = 0.0
-
-    notes = [
-        "Completeness is a heuristic confidence proxy (not statistical uncertainty).",
-        "Low completeness can indicate missingness/reporting bias.",
-    ]
-
-    return {
-        "n_counties": n,
-        "fields": present,
-        "overall": overall,
-        "notes": notes,
-    }
-
-
 @app.get("/equity_summary")
 def equity_summary(
     layer: str = Query("cancer"),
@@ -246,9 +205,9 @@ def equity_summary(
     if layer not in ALLOWED_LAYERS:
         return {"error": True, "message": f"layer must be one of {sorted(ALLOWED_LAYERS)}"}
 
-    metrics_path = DATA_DIR / "metrics.csv"
-    df = load_metrics_csv(metrics_path).copy()
+    df = load_metrics_csv(DATA_DIR / "metrics.csv").copy()
 
+    # Filter by state if provided
     if state_fips:
         sf = str(state_fips).zfill(2)
         df = df[df["fips"].str.startswith(sf)].copy()
@@ -259,8 +218,15 @@ def equity_summary(
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
 
-    data_quality = compute_data_quality(df)
+    # -------- Uncertainty / completeness (simple, judge-friendly) --------
+    required_cols = ["pm25", "deprivation", "access"]
+    n_total = int(len(df))
+    non_null_all = int(df[required_cols].notna().all(axis=1).sum()) if n_total else 0
+    completeness = float(non_null_all / n_total) if n_total else 0.0
 
+    missing_counts = {c: int(df[c].isna().sum()) for c in required_cols}
+
+    # group splits
     q25 = df["deprivation"].quantile(0.25)
     q75 = df["deprivation"].quantile(0.75)
     a25 = df["access"].quantile(0.25)
@@ -302,8 +268,9 @@ def equity_summary(
         .to_dict(orient="records")
     )
 
+    # Policy simulation
     gap_before = gap_dep
-    gap_after  = gap_before
+    gap_after = gap_before
 
     if targeted_pm25_cleanup:
         extra = -abs(float(cleanup_strength))
@@ -329,27 +296,37 @@ def equity_summary(
 
         "deprivation_gap": float(gap_dep),
         "access_gap": float(gap_acc),
+
         "drivers": {k: float(v) for k, v in drivers.items()},
         "group_avgs": {
             "high_dep": float(avg_score(high_dep)),
-            "low_dep":  float(avg_score(low_dep)),
-            "low_access":  float(avg_score(df[df["access"] <= a25])),
+            "low_dep": float(avg_score(low_dep)),
+            "low_access": float(avg_score(df[df["access"] <= a25])),
             "high_access": float(avg_score(df[df["access"] >= a75])),
         },
+
         "policy": {
             "targeted_pm25_cleanup": bool(targeted_pm25_cleanup),
             "cleanup_strength": float(cleanup_strength),
             "gap_before": float(gap_before),
-            "gap_after":  float(gap_after),
+            "gap_after": float(gap_after),
             "delta": float(gap_after - gap_before),
         },
-        "data_quality": data_quality,
+
+        # NEW: Uncertainty/completeness bundle
+        "data_completeness": {
+            "n_counties": n_total,
+            "complete_rows": non_null_all,
+            "completeness": completeness,  # 0..1
+            "missing_counts": missing_counts,
+            "cols": required_cols,
+        },
 
         "top_underserved": top,
 
-        # Bioethics: clear intended use + harm mitigation
+        # Bioethics framing (backend sends a canonical statement)
         "bioethics_note": (
-            "Use for resource allocation and upstream interventions (pollution cleanup, clinic access), "
-            "not for individual-level clinical decisions or punitive policy."
+            "Equity metrics are structural proxies (county-level), not individual blame. "
+            "Use for resource allocation and upstream interventions; not for individual-level clinical decisions."
         ),
     }

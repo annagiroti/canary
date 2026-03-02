@@ -5,7 +5,7 @@ import Tooltip from './components/Tooltip.jsx'
 import { scenarioScore } from './lib/score.js'
 
 export const LAYER_META = {
-  cancer: { label: 'Cancer Risk',       icon: '⬡', desc: 'Composite cancer vulnerability from pollution, poverty, and care access.' },
+  cancer: { label: 'Cancer Risk',       icon: '⬡', desc: 'Composite cancer vulnerability from pollution, deprivation, and care access.' },
   neuro:  { label: 'Neuro Risk',        icon: '◈', desc: 'Neurological disorder risk linked to PM2.5 exposure and socioeconomic stress.' },
   amr:    { label: 'AMR Vulnerability', icon: '⬟', desc: 'Antimicrobial resistance burden — access gaps and climate-linked infection pressure.' },
 }
@@ -61,10 +61,10 @@ function SelectedPanel({ county, scenario, onClose }) {
 
       <div style={{ marginTop: 16, fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#555', marginBottom: 10, letterSpacing: '.1em' }}>COUNTY PROFILE</div>
       {[
-        { label: 'PM2.5 Exposure',    val: props.pm25,    fmt: v => `${(v*100).toFixed(0)}%` },
-        { label: 'Poverty Rate',      val: props.poverty, fmt: v => `${(v*100).toFixed(0)}%` },
-        { label: 'Healthcare Access', val: props.access,  fmt: v => `${(v*100).toFixed(0)}%` },
-        { label: 'FIPS Code',         val: props.fips,    fmt: v => v },
+        { label: 'PM2.5 Exposure',    val: props.pm25,        fmt: v => `${(Number(v)*100).toFixed(0)}%` },
+        { label: 'Deprivation',      val: props.deprivation ?? props.poverty, fmt: v => `${(Number(v)*100).toFixed(0)}%` },
+        { label: 'Healthcare Access', val: props.access,     fmt: v => `${(Number(v)*100).toFixed(0)}%` },
+        { label: 'FIPS Code',         val: props.fips,       fmt: v => v },
       ].map(r => (
         <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 7 }}>
           <span style={{ fontSize: 11, color: '#666' }}>{r.label}</span>
@@ -77,7 +77,7 @@ function SelectedPanel({ county, scenario, onClose }) {
       <div style={{ marginTop: 16, padding: '10px 12px', background: 'rgba(124,58,237,0.1)', borderRadius: 6, border: '1px solid rgba(124,58,237,0.2)' }}>
         <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#7c3aed', marginBottom: 4 }}>MODEL NOTE</div>
         <div style={{ fontSize: 10, color: '#555', lineHeight: 1.5 }}>
-          Sensitivity weights from OLS regression on CDC PLACES + EPA AQS. Adjust sliders to explore policy scenarios.
+          Demonstration model built from public county-level proxies (AQS PM2.5 + PLACES-like indicators). Policy simulation is illustrative.
         </div>
       </div>
     </div>
@@ -90,6 +90,9 @@ export default function App() {
   const [hover, setHover]       = useState(null)
   const [selected, setSelected] = useState(null)
   const [tab, setTab]           = useState('map')
+
+  // ✅ LIFTED STATE: sidebar can now scope top counties + equity summary
+  const [selectedState, setSelectedState] = useState(null) // {name, fips} | null
 
   return (
     <div style={{
@@ -132,9 +135,11 @@ export default function App() {
           <div style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg,#7c3aed,#dc2626)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>⬡</div>
           <div>
             <div style={{ fontWeight: 700, fontSize: 15, letterSpacing: '.02em' }}>Canary</div>
-            <div style={{ fontSize: 10, color: '#555', fontFamily: "'DM Mono',monospace", letterSpacing: '.08em' }}>HEALTH EQUITY ANALYSIS PLATFORM</div>
+            <div style={{ fontSize: 10, color: '#555', fontFamily: "'DM Mono',monospace", letterSpacing: '.08em' }}>BIOHACKS · HEALTH × CLIMATE</div>
           </div>
         </div>
+
+        {/* ✅ ONLY real backend layers */}
         <div style={{ display: 'flex', gap: 4 }}>
           {Object.entries(LAYER_META).map(([k, v]) => (
             <button key={k} className={`layer-btn${layer === k ? ' active' : ''}`} onClick={() => setLayer(k)}>
@@ -142,22 +147,42 @@ export default function App() {
             </button>
           ))}
         </div>
-        <div style={{ fontSize: 11, color: '#444', fontFamily: "'DM Mono',monospace" }}>live scenario · county risk atlas</div>
+
+        <div style={{ fontSize: 11, color: '#444', fontFamily: "'DM Mono',monospace" }}>
+          {selectedState?.name ? `scope: ${selectedState.name}` : 'scope: US'}
+        </div>
       </div>
 
       {/* Body */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <ControlPanel
-          layer={layer} scenario={scenario} setScenario={setScenario}
-          tab={tab} setTab={setTab} selected={selected} onSelect={setSelected}
+          layer={layer}
+          scenario={scenario}
+          setScenario={setScenario}
+          tab={tab}
+          setTab={setTab}
+          selected={selected}
+          onSelect={setSelected}
+          selectedState={selectedState}  // ✅ now sidebar sees state scope
         />
-        <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-          <MapView layer={layer} scenario={scenario} onHover={setHover} onSelect={setSelected} />
 
-          {/* Layer info badge */}
-          <div style={{ position: 'absolute', top: 16, right: 16, maxWidth: 220, background: 'rgba(8,9,14,0.88)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: '10px 14px', backdropFilter: 'blur(8px)', pointerEvents: 'none' }}>
-            <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#7c3aed', marginBottom: 4 }}>{LAYER_META[layer].icon} {LAYER_META[layer].label}</div>
-            <div style={{ fontSize: 11, color: '#666', lineHeight: 1.5 }}>{LAYER_META[layer].desc}</div>
+        <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+          <MapView
+            layer={layer}
+            scenario={scenario}
+            onHover={setHover}
+            onSelect={setSelected}
+            selectedState={selectedState}          // ✅ controlled
+            setSelectedState={setSelectedState}    // ✅ controlled
+          />
+
+          <div style={{ position: 'absolute', top: 16, right: 16, maxWidth: 240, background: 'rgba(8,9,14,0.88)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: '10px 14px', backdropFilter: 'blur(8px)', pointerEvents: 'none' }}>
+            <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#7c3aed', marginBottom: 4 }}>
+              {LAYER_META[layer].icon} {LAYER_META[layer].label}
+            </div>
+            <div style={{ fontSize: 11, color: '#666', lineHeight: 1.5 }}>
+              {LAYER_META[layer].desc}
+            </div>
           </div>
 
           <Tooltip hover={hover} scenario={scenario} layer={layer} />

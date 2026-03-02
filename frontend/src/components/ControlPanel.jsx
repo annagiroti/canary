@@ -16,9 +16,9 @@ export default function ControlPanel({ layer, scenario, setScenario, tab, setTab
         </div>
 
         {[
-          { key: 'dPm25',   label: 'PM2.5 Δ',           min: -0.2, max: 0.2, step: 0.01, fmt: v => `${v > 0 ? '+' : ''}${Math.round(v * 100)}%` },
-          { key: 'poverty', label: 'Deprivation Index', min: 0,    max: 1,   step: 0.01, fmt: v => v.toFixed(2) },
-          { key: 'access',  label: 'Healthcare Access', min: 0,    max: 1,   step: 0.01, fmt: v => v.toFixed(2) },
+          { key: 'dPm25',   label: 'PM2.5 Δ',            min: -0.2, max: 0.2, step: 0.01, fmt: v => `${v > 0 ? '+' : ''}${Math.round(v * 100)}%` },
+          { key: 'poverty', label: 'Deprivation Index',  min: 0,    max: 1,   step: 0.01, fmt: v => v.toFixed(2) },
+          { key: 'access',  label: 'Healthcare Access',  min: 0,    max: 1,   step: 0.01, fmt: v => v.toFixed(2) },
         ].map(s => (
           <div key={s.key} style={{ marginBottom: 14 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
@@ -36,7 +36,7 @@ export default function ControlPanel({ layer, scenario, setScenario, tab, setTab
         ))}
 
         <div style={{ fontSize: 10, color: '#2a2a40', lineHeight: 1.5, fontFamily: "'DM Mono',monospace", marginTop: 4 }}>
-          score = base + w·Δpm25 + w·Δdeprivation + w·Δaccess
+          scenario adjusts pollution + deprivation + access (illustrative)
         </div>
       </div>
 
@@ -67,131 +67,95 @@ export default function ControlPanel({ layer, scenario, setScenario, tab, setTab
   )
 }
 
-/**
- * Top Counties (real data)
- * Shows top 5 counties ONLY for the currently-selected layer.
- * If a state is selected, rankings are scoped to that state.
- */
 function TopCountiesTab({ layer, scenario, selectedState, selected, onSelect }) {
-  const [byLayer, setByLayer] = useState({ cancer: [], neuro: [], amr: [] })
+  const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState(null)
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
+    setLoading(true); setErr(null)
 
-    const layers = ['cancer', 'neuro', 'amr']
-    Promise.all(
-      layers.map(l =>
-        fetch(`${API}/geojson?layer=${l}`)
-          .then(r => r.json())
-          .then(gj => (gj.features ?? []).map(f => f.properties))
-          .catch(() => [])
-      )
-    ).then(([cancer, neuro, amr]) => {
-      if (cancelled) return
-      setByLayer({ cancer, neuro, amr })
-      setLoading(false)
-    })
+    fetch(`${API}/geojson?layer=${layer}`)
+      .then(r => r.json())
+      .then(gj => {
+        if (cancelled) return
+        if (gj?.error) throw new Error(gj.message || 'geojson error')
+        const props = (gj.features ?? []).map(f => f.properties)
+        setRows(props)
+        setLoading(false)
+      })
+      .catch(e => {
+        if (cancelled) return
+        setErr(String(e?.message || e))
+        setLoading(false)
+      })
 
     return () => { cancelled = true }
-  }, [])
+  }, [layer])
 
-  function inSelectedState(c) {
-    if (!selectedState?.fips) return true
-    const sf = selectedState.fips
-    return c.STATE === sf || (c.fips?.startsWith?.(sf))
-  }
+  const scoped = useMemo(() => {
+    const sf = selectedState?.fips
+    const filtered = sf
+      ? rows.filter(c => c.STATE === sf || c.fips?.startsWith?.(sf))
+      : rows
 
-  function top5(layerKey) {
-    const palette = LAYER_PALETTES[layerKey]
-    const rows = (byLayer[layerKey] ?? [])
-      .filter(inSelectedState)
+    const palette = LAYER_PALETTES[layer]
+    return filtered
       .map(c => {
         const base = c.base ?? 0.3
         const score = Math.min(1, Math.max(0, scenarioScore({ ...c, base }, scenario)))
         const barColor = palette[Math.min(palette.length - 1, Math.floor(score * palette.length))]
-        return { ...c, base, score, barColor }
+        return { ...c, score, barColor }
       })
       .sort((a, b) => b.score - a.score)
       .slice(0, 5)
+  }, [rows, scenario, selectedState?.fips, layer])
 
-    return rows
-  }
-
-  const scopedLabel = selectedState?.name ? `in ${selectedState.name}` : 'nationwide'
-
-  const section = useMemo(() => {
-    if (layer === 'cancer') return { key: 'cancer', title: 'TOP CANCER RISK COUNTIES', icon: '🧬' }
-    if (layer === 'neuro')  return { key: 'neuro',  title: 'TOP NEURO RISK COUNTIES',  icon: '🧠' }
-    if (layer === 'amr')    return { key: 'amr',    title: 'TOP AMR VULNERABILITY COUNTIES', icon: '🦠' }
-    return null
-  }, [layer])
-
-  const rows = section ? top5(section.key) : []
+  const scopeLabel = selectedState?.name ? `in ${selectedState.name}` : 'nationwide'
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '10px 10px' }}>
       <div style={{ fontSize: 10, color: '#666', fontFamily: "'DM Mono',monospace", letterSpacing: '.08em', margin: '4px 4px 10px' }}>
-        Rankings {scopedLabel} · scenario-adjusted
+        Top 5 {scopeLabel} · {LAYER_META[layer].label}
       </div>
 
-      {loading && (
-        <div style={{ padding: 12, fontSize: 12, color: '#777' }}>Loading county rankings…</div>
-      )}
+      {loading && <div style={{ padding: 12, fontSize: 12, color: '#777' }}>Loading county rankings…</div>}
+      {err && <div style={{ padding: 12, fontSize: 11, color: '#fca5a5' }}>Rankings error: {err}</div>}
 
-      {!loading && section && (
-        <div style={{ marginBottom: 14, padding: '10px 10px', background: 'rgba(255,255,255,0.03)', borderRadius: 10, border: '1px solid rgba(255,255,255,0.06)' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
-            <div style={{ fontSize: 11, color: '#bbb', fontFamily: "'DM Mono',monospace", letterSpacing: '.08em' }}>
-              {section.icon} {section.title}
-            </div>
-            <div style={{ fontSize: 10, color: '#666', fontFamily: "'DM Mono',monospace" }}>
-              top 5
-            </div>
-          </div>
-
-          <div style={{ marginTop: 8 }}>
-            {rows.map((c, i) => {
-              const rl = riskLabel(c.score)
-              return (
-                <div
-                  key={`${section.key}-${c.fips}`}
-                  className={`county-row${selected?.fips === c.fips ? ' sel' : ''}`}
-                  onClick={() => onSelect?.(c)}
-                >
-                  <span style={{ fontSize: 10, color: '#444', fontFamily: "'DM Mono',monospace", width: 18 }}>{i + 1}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {c.county || c.NAME || 'County'}{c.state ? `, ${c.state}` : ''}
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3 }}>
-                      <div className="score-bar-bg">
-                        <div className="score-bar-fill" style={{ width: `${Math.min(1, Math.max(0, c.score)) * 100}%`, background: c.barColor }} />
-                      </div>
-                      <span style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#777', minWidth: 32 }}>
-                        {(c.score * 100).toFixed(2)}%
-                      </span>
-                    </div>
+      {!loading && !err && (
+        <>
+          {scoped.map((c, i) => {
+            const rl = riskLabel(c.score)
+            return (
+              <div
+                key={c.fips || i}
+                className={`county-row${selected?.fips === c.fips ? ' sel' : ''}`}
+                onClick={() => onSelect?.(c)}
+              >
+                <span style={{ fontSize: 10, color: '#444', fontFamily: "'DM Mono',monospace", width: 18 }}>{i + 1}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {c.county || c.NAME || 'County'}{c.state ? `, ${c.state}` : ''}
                   </div>
-                  <span className={`risk-badge ${rl.cls}`}>{rl.text}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3 }}>
+                    <div className="score-bar-bg">
+                      <div className="score-bar-fill" style={{ width: `${Math.min(1, Math.max(0, c.score)) * 100}%`, background: c.barColor }} />
+                    </div>
+                    <span style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#777', minWidth: 32 }}>
+                      {(c.score * 100).toFixed(0)}%
+                    </span>
+                  </div>
                 </div>
-              )
-            })}
-
-            {rows.length === 0 && (
-              <div style={{ padding: 10, fontSize: 11, color: '#666' }}>
-                No county data found for this scope.
+                <span className={`risk-badge ${rl.cls}`}>{rl.text}</span>
               </div>
-            )}
-          </div>
-        </div>
-      )}
+            )
+          })}
 
-      {!loading && !section && (
-        <div style={{ padding: 12, fontSize: 12, color: '#777' }}>
-          Unknown layer: {String(layer)}
-        </div>
+          {scoped.length === 0 && (
+            <div style={{ padding: 12, fontSize: 11, color: '#666' }}>No county data found for this scope.</div>
+          )}
+        </>
       )}
     </div>
   )
@@ -215,7 +179,7 @@ function EquityTab({ scenario, layer, onSelect, selectedState }) {
       access: String(scenario.access ?? 0.6),
       targeted_pm25_cleanup: String(policyOn),
       cleanup_strength: "0.20",
-      ...(selectedState ? { state_fips: selectedState.fips } : {}),
+      ...(selectedState?.fips ? { state_fips: selectedState.fips } : {}),
     })
 
     fetch(`${API}/equity_summary?${params.toString()}`)
@@ -238,19 +202,12 @@ function EquityTab({ scenario, layer, onSelect, selectedState }) {
   const gap = summary?.deprivation_gap ?? 0
   const avgHigh = summary?.group_avgs?.high_dep ?? 0
   const avgLow  = summary?.group_avgs?.low_dep ?? 0
+
   const drivers = summary?.drivers ?? { pm25_gap: 0, deprivation_gap: 0, low_access_gap: 0 }
-  const policy = summary?.policy ?? { targeted_pm25_cleanup: false, gap_before: gap, gap_after: gap, delta: 0 }
+  const policy  = summary?.policy ?? { gap_before: gap, gap_after: gap, delta: 0 }
 
-  // Uncertainty proxy
-  const dq = summary?.data_quality ?? null
-  const overallCompleteness = dq?.overall ?? 0
-  const fieldCompleteness = dq?.fields ?? { pm25: 0, deprivation: 0, access: 0 }
-  const nCounties = dq?.n_counties ?? 0
-
-  const completenessLabel =
-    overallCompleteness >= 0.9 ? { text: 'High', cls: 'low' } :
-    overallCompleteness >= 0.7 ? { text: 'Medium', cls: 'moderate' } :
-    { text: 'Low', cls: 'high' }
+  const completeness = summary?.data_completeness?.completeness ?? null
+  const nCounties = summary?.data_completeness?.n_counties ?? null
 
   const driverRows = useMemo(() => ([
     { k: 'pm25_gap', label: 'Pollution exposure gap', val: drivers.pm25_gap },
@@ -269,48 +226,31 @@ function EquityTab({ scenario, layer, onSelect, selectedState }) {
 
       {!loading && !err && summary && (
         <>
-          {/* Core inequity card */}
+          {/* Inequity card */}
           <div style={{ background: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.2)', borderRadius: 8, padding: '12px 14px', marginBottom: 12 }}>
             <div style={{ fontSize: 10, color: '#888', marginBottom: 4 }}>
-              Inequity Gap (high vs low deprivation)
+              Inequity Gap (high vs low deprivation){selectedState?.name ? ` · ${selectedState.name}` : ''}
             </div>
             <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'DM Mono',monospace", color: '#fca5a5' }}>
               {gap.toFixed(3)}
             </div>
             <div style={{ fontSize: 10, color: '#666', marginTop: 6, lineHeight: 1.5 }}>
-              Use for *resource allocation* and *upstream interventions* — not individual-level clinical decisions.
+              This gap reflects differences in *structural conditions* associated with {LAYER_META[layer].label.toLowerCase()} burden.
             </div>
           </div>
 
-          {/* Data completeness / uncertainty proxy */}
+          {/* Uncertainty / confidence */}
           <div style={{ marginBottom: 12, padding: '12px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: 8, border: '1px solid rgba(255,255,255,0.06)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#555', letterSpacing: '.08em' }}>
-                DATA COMPLETENESS (CONFIDENCE PROXY)
-              </div>
-              <span className={`risk-badge ${completenessLabel.cls}`}>{completenessLabel.text}</span>
+            <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#555', marginBottom: 6, letterSpacing: '.08em' }}>
+              UNCERTAINTY (DATA COMPLETENESS)
             </div>
-
-            <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#bbb' }}>
-              <span>Overall</span>
-              <span style={{ fontFamily: "'DM Mono',monospace" }}>{(overallCompleteness * 100).toFixed(0)}%</span>
+            <div style={{ fontSize: 11, color: '#777', lineHeight: 1.5 }}>
+              {completeness == null
+                ? 'Completeness unavailable.'
+                : `Complete rows: ${(completeness * 100).toFixed(0)}% (${summary.data_completeness.complete_rows}/${nCounties}) for pm25 + deprivation + access.`}
             </div>
-
-            <div style={{ marginTop: 10, fontSize: 10, color: '#666', lineHeight: 1.5 }}>
-              Based on % counties with non-missing <span style={{ fontFamily: "'DM Mono',monospace" }}>pm25</span>, <span style={{ fontFamily: "'DM Mono',monospace" }}>deprivation</span>, and <span style={{ fontFamily: "'DM Mono',monospace" }}>access</span> ({nCounties} counties in scope).
-            </div>
-
-            <div style={{ marginTop: 10 }}>
-              {[
-                { label: 'PM2.5', val: fieldCompleteness.pm25 },
-                { label: 'Deprivation', val: fieldCompleteness.deprivation },
-                { label: 'Access', val: fieldCompleteness.access },
-              ].map(r => (
-                <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#bbb', marginTop: 6 }}>
-                  <span>{r.label}</span>
-                  <span style={{ fontFamily: "'DM Mono',monospace" }}>{(Number(r.val) * 100).toFixed(0)}%</span>
-                </div>
-              ))}
+            <div style={{ fontSize: 10, color: '#666', marginTop: 6, lineHeight: 1.5 }}>
+              Lower completeness → higher uncertainty. Treat comparisons cautiously.
             </div>
           </div>
 
@@ -330,7 +270,7 @@ function EquityTab({ scenario, layer, onSelect, selectedState }) {
             </div>
           ))}
 
-          {/* Driver decomposition */}
+          {/* Drivers */}
           <div style={{ marginTop: 14, padding: '12px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: 8, border: '1px solid rgba(255,255,255,0.06)' }}>
             <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#555', marginBottom: 8, letterSpacing: '.08em' }}>
               WHAT DRIVES THE GAP
@@ -344,7 +284,7 @@ function EquityTab({ scenario, layer, onSelect, selectedState }) {
               </div>
             ))}
             <div style={{ fontSize: 10, color: '#666', marginTop: 8, lineHeight: 1.5 }}>
-              These are *structural* differences (exposure, deprivation, access), not individual behavior.
+              These are *structural* differences (exposure, deprivation, access) — not individual behavior.
             </div>
           </div>
 
@@ -361,7 +301,7 @@ function EquityTab({ scenario, layer, onSelect, selectedState }) {
             </div>
 
             <div style={{ fontSize: 11, color: '#777', marginBottom: 8, lineHeight: 1.5 }}>
-              Applies an additional 20% PM2.5 reduction only in the highest-deprivation counties. This is a “what-if” scenario, not a causal claim.
+              Applies an additional 20% PM2.5 reduction only in the highest-deprivation counties. Correlation ≠ causation; for discussion, not prediction.
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#bbb' }}>
@@ -404,24 +344,25 @@ function EquityTab({ scenario, layer, onSelect, selectedState }) {
             ))}
           </div>
 
-          {/* Bioethics framing */}
+          {/* Bioethics note (canonical) */}
           <div style={{ marginTop: 16, padding: '12px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: 8, borderLeft: '3px solid #7c3aed' }}>
             <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#555', marginBottom: 6 }}>BIOETHICS NOTE</div>
             <div style={{ fontSize: 11, color: '#777', lineHeight: 1.6 }}>
-              Risk and equity scores reflect structural conditions (exposure + access), not individual blame. Use for resource allocation and upstream interventions; not for individual-level clinical decisions or punitive policy.
+              {summary.bioethics_note || 'Use for resource allocation and upstream interventions; not for individual-level clinical decisions.'}
             </div>
           </div>
 
-          {/* A) Data + model limitations panel (judge-facing) */}
+          {/* NEW: Data + model limitations panel */}
           <div style={{ marginTop: 12, padding: '12px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: 8, border: '1px solid rgba(255,255,255,0.06)' }}>
             <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#555', marginBottom: 8, letterSpacing: '.08em' }}>
               DATA + MODEL LIMITATIONS
             </div>
             <ul style={{ marginLeft: 16, color: '#777', fontSize: 11, lineHeight: 1.6 }}>
-              <li>County-level proxies (ecological analysis) — not individual risk.</li>
-              <li>Missingness + reporting bias may vary by region.</li>
-              <li>Correlation ≠ causation; policy simulation is illustrative “what-if”.</li>
-              <li>Do not use for denial of care, surveillance, or punitive policy decisions.</li>
+              <li>County-level proxies (ecological) — not individual risk.</li>
+              <li>Missingness + reporting bias may differ by region.</li>
+              <li>Correlation ≠ causation (policy simulation is illustrative).</li>
+              <li>Do not use for denial of care, surveillance, or punitive policy.</li>
+              <li><b>Fair use:</b> prioritize upstream interventions + resource allocation (not clinical decisions).</li>
             </ul>
           </div>
         </>
