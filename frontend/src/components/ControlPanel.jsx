@@ -170,7 +170,7 @@ function TopCountiesTab({ layer, scenario, selectedState, selected, onSelect }) 
                         <div className="score-bar-fill" style={{ width: `${Math.min(1, Math.max(0, c.score)) * 100}%`, background: c.barColor }} />
                       </div>
                       <span style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: '#777', minWidth: 32 }}>
-                        {(c.score * 100).toFixed(0)}%
+                        {(c.score * 100).toFixed(2)}%
                       </span>
                     </div>
                   </div>

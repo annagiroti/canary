@@ -149,7 +149,7 @@ export default function App() {
           <div style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg,#7c3aed,#dc2626)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>⬡</div>
           <div>
             <div style={{ fontWeight: 700, fontSize: 15, letterSpacing: '.02em' }}>Canary</div>
-            <div style={{ fontSize: 10, color: '#555', fontFamily: "'DM Mono',monospace", letterSpacing: '.08em' }}>BIOHACKS 2025 · HEALTH × CLIMATE</div>
+            <div style={{ fontSize: 10, color: '#555', fontFamily: "'DM Mono',monospace", letterSpacing: '.08em' }}>HEALTH EQUITY ANALYSIS PLATFORM</div>
           </div>
         </div>
         <div style={{ display: 'flex', gap: 4 }}>
